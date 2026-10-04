@@ -93,6 +93,22 @@ struct WorkbenchCommands: Commands {
                 .keyboardShortcut(.delete, modifiers: [.command])
                 .disabled(model?.selection.isEmpty ?? true && model?.annotation == nil)
         }
+        CommandMenu("Page") {
+            Button("New Page") { model?.addPage() }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(model == nil)
+            Button("Duplicate Page") { model?.addPage(duplicate: true) }
+                .disabled(model == nil)
+            Button("Delete Page") { model.map { $0.deletePage($0.activePageID) } }
+                .disabled((model?.pages.count ?? 0) < 2)
+            Divider()
+            Button("Previous Page") { model?.switchPage(by: -1) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(model == nil)
+            Button("Next Page") { model?.switchPage(by: 1) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(model == nil)
+        }
         CommandMenu("Animation") {
             Button(model?.isPlaying == true ? "Pause" : "Play") { model?.togglePlay() }
                 .keyboardShortcut(.return, modifiers: [.command])

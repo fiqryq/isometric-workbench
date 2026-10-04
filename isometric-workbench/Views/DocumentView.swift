@@ -19,6 +19,8 @@ struct DocumentView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 236, max: 340)
         } detail: {
             VStack(spacing: 0) {
+                PageTabs(model: model)
+                Divider()
                 Viewport(model: model)
                     .frame(minWidth: 420, minHeight: 320)
                 Divider()
@@ -68,6 +70,7 @@ struct DocumentView: View {
         .sheet(isPresented: Binding(get: { model.presentPaywall }, set: { model.presentPaywall = $0 })) {
             PaywallView()
         }
+        .navigationSubtitle(model.pages.count > 1 ? model.activePageName : "")
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { _, new in model.undoManager = new }
         .focusedSceneValue(\.sceneModel, model)
