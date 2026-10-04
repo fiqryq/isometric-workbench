@@ -29,7 +29,7 @@ nonisolated enum SVGWriter {
     static func content(_ frame: Frame, clip: inout Int, named: Bool = true, merged: Bool = false) -> String {
         let style = frame.style
         var out = ""
-        if let sheet = frame.sheet { out += sheetSVG(sheet, style: style) }
+        for b in frame.boards { out += sheetSVG(b, style: style) }
         for g in frame.guidesBehind { out += guideSVG(g, style: style) }
         for o in frame.overlaysBehind { out += overlaySVG(o, style: style, clip: &clip, named: named) }
         for (i, item) in frame.items.enumerated() {
@@ -146,7 +146,8 @@ nonisolated enum SVGWriter {
 
     static func sheetSVG(_ s: SheetLayout, style: Style) -> String {
         let r = s.rect, m = s.margin
-        var out = #"<rect x="\#(n(r.minX))" y="\#(n(r.minY))" width="\#(n(r.width))" height="\#(n(r.height))" fill="\#(style.sheetFill.hex)"/>"#
+        var out = #"<rect x="\#(n(r.minX))" y="\#(n(r.minY))" width="\#(n(r.width))" height="\#(n(r.height))" fill="\#(s.fill.hex)"/>"#
+        guard s.marks else { return out }
         var d = ""
         var x = r.minX + m
         while x <= r.maxX - m + 1e-6 {

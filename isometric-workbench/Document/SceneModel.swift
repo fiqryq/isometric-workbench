@@ -20,7 +20,11 @@ final class SceneModel {
     var scene: SceneFile {
         didSet { snapshot.value = scene }
     }
-    var selection: Set<Part.ID> = []
+    var selection: Set<Part.ID> = [] {
+        didSet { if !selection.isEmpty { selectedFrame = nil } }
+    }
+    /// The selected frame, when a frame rather than its parts is selected.
+    var selectedFrame: Artboard.ID?
     var pickedFaces: [PickedFace] = []
     var status = "Ready"
 
@@ -32,7 +36,9 @@ final class SceneModel {
     var polygonSides = 6
     /// A finished outline waiting for Extrude / Push / Revolve / Keep.
     var sketch: PendingSketch?
-    var annotation: AnnotationRef?
+    var annotation: AnnotationRef? {
+        didSet { if annotation != nil { selectedFrame = nil } }
+    }
     var pickedRings: [RingPick] = []
     var pickedSegments: [SegmentPick] = []
     /// Keys picked in the timeline.
@@ -126,6 +132,7 @@ final class SceneModel {
         if let a = annotation, !scene.contains(a) { annotation = nil }
         if let h = sketch?.plane.host, !ids.contains(h) { sketch = nil }
         pickedKeys = pickedKeys.filter { $0.exists(in: scene) }
+        if let f = selectedFrame, !scene.frames.contains(where: { $0.id == f }) { selectedFrame = nil }
     }
 
     // MARK: - Parts
@@ -144,16 +151,6 @@ final class SceneModel {
         status = "\(spec.name) added — edit its steps in the inspector."
     }
 
-    func loadExample(_ ex: Example) {
-        let s = ex.scene(style: scene.style, angle: scene.angle)
-        edit("Open Example") { $0 = s }
-        selection = []
-        pickedFaces = []
-        time = 0
-        status = "\(ex.title) — \(s.parts.count) editable part\(s.parts.count == 1 ? "" : "s")."
-        zoomToFit(after: 0.35)
-    }
-
     func uniqueName(_ base: String) -> String {
         let names = Set(scene.parts.map(\.name))
         if !names.contains(base) { return base }
@@ -165,16 +162,21 @@ final class SceneModel {
     func deleteSelection() {
         if !pickedKeys.isEmpty { return deletePickedKeys() }
         if let a = annotation { return deleteAnnotation(a) }
+        if let f = selectedFrame { return deleteFrame(f, keepParts: false) }
         guard !selection.isEmpty else { return }
         let ids = selection
-        edit(ids.count == 1 ? "Delete Part" : "Delete Parts") { s in
-            s.parts.removeAll { ids.contains($0.id) }
-            s.dimensions.removeAll { ids.contains($0.part) }
-            s.shapes.removeAll { $0.host.map(ids.contains) ?? false }
-            s.decals.removeAll { $0.host.map(ids.contains) ?? false }
-        }
+        edit(ids.count == 1 ? "Delete Part" : "Delete Parts") { Self.removeParts(ids, from: &$0) }
         ids.forEach(build.forget)
         prune()
+    }
+
+    /// Takes parts out of the scene with everything that hangs off them.
+    static func removeParts(_ ids: Set<Part.ID>, from s: inout SceneFile) {
+        s.parts.removeAll { ids.contains($0.id) }
+        s.dimensions.removeAll { ids.contains($0.part) }
+        s.shapes.removeAll { $0.host.map(ids.contains) ?? false }
+        s.decals.removeAll { $0.host.map(ids.contains) ?? false }
+        s.frames.place(Array(ids), in: nil)
     }
 
     func duplicateSelection() {
@@ -235,6 +237,7 @@ final class SceneModel {
     func value(_ prop: String, of part: Part) -> Double { part.anim.value(prop, at: frameTime) }
 
     func nudge(_ d: Vec3) {
+        if let f = selectedFrame { return moveFrame(f, by: Vec2(d.x, d.y)) }
         let ids = Set(selectedParts.filter { !$0.locked }.map(\.id))
         guard !ids.isEmpty else { return }
         let t = frameTime, auto = autoKey
@@ -464,8 +467,10 @@ final class SceneModel {
         let b = frame().bounds
         let size = viewportSize
         guard b.width > 0, b.height > 0, size.width > 10, size.height > 10 else { return }
-        zoom = clamp(min((size.width - 48) / b.width, (size.height - 48) / b.height), 0.05, 8)
-        pan = Vec2(-b.midX * zoom, -b.midY * zoom)
+        // Keep the drawing clear of the floating tool pills along the top.
+        let top = 52.0
+        zoom = clamp(min((size.width - 48) / b.width, (size.height - 48 - top) / b.height), 0.05, 8)
+        pan = Vec2(-b.midX * zoom, -b.midY * zoom + top / 2)
     }
 
     func zoom(by factor: Double, around p: Vec2? = nil) {

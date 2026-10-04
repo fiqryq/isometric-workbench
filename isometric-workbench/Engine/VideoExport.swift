@@ -114,7 +114,7 @@ nonisolated enum VideoExportError: LocalizedError {
 
 nonisolated enum VideoExporter {
     /// Frame times and a fixed box that holds the whole animation (the
-    /// sheet when it's shown).
+    /// frames when there are any).
     static func plan(_ scene: SceneFile, composer: FrameComposer, settings: VideoSettings) -> VideoPlan {
         let fps = max(1, settings.fps.rounded())
         let count = max(1, Int(((settings.end - settings.start) * fps).rounded()))
@@ -123,8 +123,8 @@ nonisolated enum VideoExporter {
         let stride = max(1, count / 48)
         for i in Swift.stride(from: 0, to: count, by: stride) + [count - 1] {
             let f = composer.compose(scene, at: times[i])
-            if let sheet = f.sheet {
-                box = sheet.rect
+            if !f.boards.isEmpty {
+                box = f.bounds
                 break
             }
             box = box.union(f.bounds)

@@ -18,11 +18,13 @@ public struct ExamplePart: Sendable {
     public var fill: String?
     public var on: String?
     public var more: [Note] = []
+    /// Keys that animate the part (offsets from where `ops` put it).
+    public var keys: [String: [Keyframe]] = [:]
     public var ops: [Op]
 
     init(
         _ name: String, label: String? = nil, side: CalloutSide? = nil, target: Vec2? = nil, reach: Double? = nil,
-        alignTo: String? = nil, fill: String? = nil, on: String? = nil, more: [Note] = [], ops: [Op]
+        alignTo: String? = nil, fill: String? = nil, on: String? = nil, more: [Note] = [], keys: [String: [Keyframe]] = [:], ops: [Op]
     ) {
         self.name = name
         self.label = label
@@ -33,6 +35,7 @@ public struct ExamplePart: Sendable {
         self.fill = fill
         self.on = on
         self.more = more
+        self.keys = keys
         self.ops = ops
     }
 }
@@ -48,6 +51,7 @@ public struct Example: Sendable, Identifiable {
     public let guides: (@Sendable () -> [Guide])?
 
     public static let all: [Example] = [
+        Example(id: "logo", title: "Isometric Workbench logo", fig: "FIG.000", year: nil, parts: logoParts, guides: nil),
         Example(id: "keyswitch", title: "Mechanical keyswitch", fig: "FIG.008", year: nil, parts: keyswitchParts, guides: nil),
         Example(id: "camera", title: "Rangefinder camera", fig: "FIG.014", year: nil, parts: cameraParts, guides: nil),
         Example(id: "gear", title: "Spur gear", fig: "FIG.021", year: nil, parts: gearParts, guides: nil),
@@ -64,14 +68,15 @@ public struct Example: Sendable, Identifiable {
         s.name = title
         s.style = style
         s.angle = angle
-        s.sheet.visible = true
-        s.sheet.fig = fig
-        s.sheet.title = title
-        if let year { s.sheet.year = year }
+        var sheet = Artboard(name: title, marks: true)
+        sheet.fig = fig
+        sheet.title = title
+        if let year { sheet.year = year }
         s.parts = parts().map { ep in
             var p = Part(name: ep.name, ops: ep.ops)
             p.style.fill = ep.fill
             p.on = ep.on
+            p.anim.keys = ep.keys
             if let label = ep.label {
                 p.callouts.append(Callout(text: label, side: ep.side, reach: ep.reach ?? 70, target: ep.target, alignTo: ep.alignTo))
             }
@@ -81,8 +86,38 @@ public struct Example: Sendable, Identifiable {
             return p
         }
         s.guides = guides?() ?? []
+        sheet.children = s.parts.map(\.id)
+        s.frames = [sheet]
         return s
     }
+}
+
+// MARK: - Logo
+
+/// The app's mark, "Exploded Stack": a cube split into three slabs and pulled
+/// apart. The base shows a section cut through its socket, the core is a
+/// blueprint tint and the cap is bevelled. It is also the app icon. It assembles and explodes again on a loop.
+@Sendable func logoParts() -> [ExamplePart] {
+    let s = 120.0, h = 34.0, g = 50.0
+    let zCore = h + g, zCap = zCore + h + g
+    /// Exploded at 0 and 4 s, assembled from 1.4 to 2.6 s.
+    func travel(_ closed: Double) -> [String: [Keyframe]] {
+        ["z": [Keyframe(t: 0, v: 0), Keyframe(t: 1.4, v: -closed), Keyframe(t: 2.6, v: -closed), Keyframe(t: 4, v: 0)]]
+    }
+    return [
+        ExamplePart("Base", ops: [
+            exBox(-s / 2, -s / 2, 0, s, s, h),
+            .push(axis: .z, at: h, depth: -18, loops: [exCircle(0, 0, 14, 40)]),
+            .cut(.quarter, fx: 50, fy: 50),
+        ]),
+        ExamplePart("Core", label: "Isometric Workbench", side: .right, target: Vec2(0.78, 0.5), reach: 90, fill: "#D9E0FB", keys: travel(g), ops: [
+            exBox(-s / 2, -s / 2, zCore, s, s, h),
+        ]),
+        ExamplePart("Cap", keys: travel(2 * g), ops: [
+            exBox(-s / 2, -s / 2, zCap, s, s, h),
+            .loopCut(id: "CAP", axis: .z, count: 1, slide: 20, scales: [100, 100, 78]),
+        ]),
+    ]
 }
 
 // MARK: - Keyswitch

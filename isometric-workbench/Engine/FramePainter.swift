@@ -14,16 +14,25 @@ nonisolated enum FramePainter {
             ctx.setFillColor(RGB(hex: style.bg).cgColor)
             ctx.fill(frame.bounds.cgRect.insetBy(dx: -1, dy: -1))
         }
-        if let sheet = frame.sheet { paintSheet(sheet, style: style, in: ctx) }
+        ctx.saveGState()
+        for b in frame.boards { paintSheet(b, style: style, in: ctx) }
         for g in frame.guidesBehind { paintGuide(g, style: style, in: ctx) }
         for o in frame.overlaysBehind { paintOverlay(o, style: style, in: ctx) }
         for (i, item) in frame.items.enumerated() {
-            paintItem(item, style: style, in: ctx)
+            if let b = frame.board(item.board), b.clip {
+                ctx.saveGState()
+                ctx.clip(to: b.rect.cgRect)
+                paintItem(item, style: style, in: ctx)
+                ctx.restoreGState()
+            } else {
+                paintItem(item, style: style, in: ctx)
+            }
             for g in frame.guidesAbove[i] ?? [] { paintGuide(g, style: style, in: ctx) }
             for o in frame.overlaysAbove[i] ?? [] { paintOverlay(o, style: style, in: ctx) }
         }
         for c in frame.callouts { paintCallout(c, ink: RGB(hex: style.ink), in: ctx) }
         for d in frame.dimensions { paintDimension(d, style: style, in: ctx) }
+        ctx.restoreGState()
     }
 
     static let watermarkText = "MADE WITH ISOMETRIC WORKBENCH"
@@ -224,8 +233,9 @@ nonisolated enum FramePainter {
 
     static func paintSheet(_ s: SheetLayout, style: Style, in ctx: CGContext) {
         let r = s.rect, m = s.margin
-        ctx.setFillColor(style.sheetFill.cgColor)
+        ctx.setFillColor(s.fill.cgColor)
         ctx.fill(r.cgRect)
+        guard s.marks else { return }
         ctx.saveGState()
         ctx.setStrokeColor(RGB(hex: style.ink).cgColor(alpha: 0.07))
         ctx.setLineWidth(0.5)

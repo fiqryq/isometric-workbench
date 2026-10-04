@@ -19,7 +19,7 @@ struct TransportBar: View {
                 .toggleStyle(.button)
                 .help("Loop playback")
 
-            if showTimeline { Spacer() } else { Timeline(model: model) }
+            Spacer()
 
             Text(String(format: "%5.2f / %.2f s", model.frameTime, model.scene.duration))
                 .font(.caption.monospacedDigit())
@@ -44,9 +44,8 @@ struct TransportBar: View {
             }
             .fixedSize()
 
-            Toggle(isOn: $showTimeline) { Image(systemName: "timeline.selection") }
-                .toggleStyle(.button)
-                .help("Show or hide the timeline")
+            Button { showTimeline = false } label: { Image(systemName: "chevron.down") }
+                .help("Hide the timeline (⇧⌘T)")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
@@ -55,58 +54,21 @@ struct TransportBar: View {
     }
 }
 
-/// Scrubber with ticks for the selection's keyframes.
-struct Timeline: View {
+/// Quiet status line in the canvas corner, in place of a status bar.
+struct CanvasStatus: View {
     let model: SceneModel
 
     var body: some View {
-        let duration = model.scene.duration
-        let keys = model.selectedParts.flatMap(\.anim.keyTimes) + (model.selection.isEmpty ? model.scene.camera.keyTimes : [])
-        GeometryReader { geo in
-            let w = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary).frame(height: 4)
-                Capsule().fill(Color.accentColor.opacity(0.5))
-                    .frame(width: max(0, w * model.frameTime / duration), height: 4)
-                ForEach(Array(Set(keys)).sorted(), id: \.self) { t in
-                    Image(systemName: "diamond.fill")
-                        .font(.system(size: 7))
-                        .foregroundStyle(.secondary)
-                        .position(x: w * t / duration, y: geo.size.height / 2)
-                }
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 2, height: 16)
-                    .position(x: w * model.frameTime / duration, y: geo.size.height / 2)
-            }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
-                if model.isPlaying { model.pause() }
-                model.seek(duration * Double(v.location.x / max(1, w)))
-            })
-        }
-        .frame(height: 20)
-    }
-}
-
-struct StatusBar: View {
-    let model: SceneModel
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(model.status).lineLimit(1).truncationMode(.tail)
-            Spacer()
+        HStack(spacing: 8) {
             if model.build.isBuilding {
                 ProgressView().controlSize(.mini)
-                Text("Building…")
             }
+            Text(model.status).lineLimit(1).truncationMode(.tail)
+            Text("·")
             Text("\(model.scene.parts.count) part\(model.scene.parts.count == 1 ? "" : "s")")
-            Text("\(Int((model.zoom * 100).rounded()))%").monospacedDigit()
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(.bar)
+        .allowsHitTesting(false)
     }
 }

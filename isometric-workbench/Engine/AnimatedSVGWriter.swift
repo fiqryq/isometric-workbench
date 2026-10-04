@@ -19,8 +19,8 @@ nonisolated enum AnimatedSVGWriter {
         let spans = try plan.spans(progress: progress) { t in
             var frame = composer.compose(scene, at: t)
             style = frame.style
-            let sheet = frame.sheet.map { SVGWriter.sheetSVG($0, style: frame.style) } ?? ""
-            frame.sheet = nil
+            let sheet = frame.boards.map { SVGWriter.sheetSVG($0, style: frame.style) }.joined()
+            frame.boards = []
             var clip = 0
             return Content(sheet: sheet, body: SVGWriter.content(frame, clip: &clip, named: false, merged: true))
         }

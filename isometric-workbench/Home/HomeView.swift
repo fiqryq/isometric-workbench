@@ -500,11 +500,15 @@ enum HomeWindow {
     }
 }
 
+/// Nonisolated because AppKit can call these right at launch, before the main
+/// actor's executor check is safe to run.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
+    nonisolated func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { HomeWindow.show() }
+    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            DispatchQueue.main.async { MainActor.assumeIsolated { HomeWindow.show() } }
+        }
         return false
     }
 }

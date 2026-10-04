@@ -18,7 +18,7 @@ struct WorkbenchTests {
         let frame = model.exportFrame()
         #expect(frame.complete)
         #expect(frame.items.count == ex.parts().count)
-        #expect(frame.sheet != nil)
+        #expect(frame.boards.count == 1)
         #expect(frame.callouts.count >= 1)
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-exports", isDirectory: true)
@@ -66,7 +66,6 @@ struct WorkbenchTests {
         var scene = SceneFile()
         let box = Part(name: "Block", ops: [.box(w: 120, d: 80, h: 60), .loopCut(id: "L1", axis: .z, count: 3)])
         scene.parts = [box]
-        scene.sheet.visible = false
         let model = SceneDocument(scene: scene).model
         let b = try #require(model.build.meshNow(for: box)).bounds
 

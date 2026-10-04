@@ -4,9 +4,8 @@
 
 import AppKit
 
-// Brand colours and mark geometry match design/logo/build_kit.py.
+// Brand colours; the mark matches the "Isometric Workbench logo" example scene.
 let ink = CGColor(srgbRed: 0x2d / 255, green: 0x55 / 255, blue: 0xe8 / 255, alpha: 1)
-let redline = CGColor(srgbRed: 0xe0 / 255, green: 0x4a / 255, blue: 0x2f / 255, alpha: 1)
 let paper = CGColor(srgbRed: 0xfb / 255, green: 0xfb / 255, blue: 0xfa / 255, alpha: 1)
 
 let cos30 = cos(Double.pi / 6)
@@ -18,21 +17,81 @@ func polygon(_ points: [CGPoint]) -> CGPath {
     return path
 }
 
-/// The Lift mark: an open block whose top face has lifted off. `gap` and `seam` are in cube-edge units.
-func drawMark(in ctx: CGContext, height: Double, centre: CGPoint, gap: Double, seam: Double) {
-    let unit = height / (2 + gap)
-    let origin = CGPoint(x: centre.x, y: centre.y - height / 2 + unit)
+/// The Exploded Stack mark: a cube split into three slabs and pulled apart, the
+/// base cut open on a quarter section, the cap bevelled. Matches the "Isometric
+/// Workbench logo" example scene. Lengths are in cube-edge units.
+/// `solid` drops the outlines and shades each face in blue, for 16 and 32 px.
+func drawMark(in ctx: CGContext, height: Double, centre: CGPoint, line: Double, solid: Bool) {
+    let h = 34.0 / 120, g = 50.0 / 120, ring = 0.6, taper = 0.78
+    let top = 3 * h + 2 * g
+    // Screen height of the whole stack: the cube's diamond (1 unit) plus its height.
+    let unit = height / (1 + top)
+    // The front-bottom corner sits on the bottom edge of `height`.
+    let origin = CGPoint(x: centre.x, y: centre.y - height / 2 + unit / 2)
     func iso(_ x: Double, _ y: Double, _ z: Double) -> CGPoint {
-        CGPoint(x: origin.x + (x - y) * cos30 * unit, y: origin.y + z * unit - (x + y) * 0.5 * unit)
+        CGPoint(x: origin.x + (x - y) * cos30 * unit, y: origin.y + z * unit - (x + y - 1) * 0.5 * unit)
     }
-    let s = seam, z = 1 + gap
-    ctx.setFillColor(ink)
-    ctx.addPath(polygon([iso(0, 1, 0), iso(1 - s, 1, 0), iso(1 - s, 1, 1), iso(0, 1, 1)]))
-    ctx.addPath(polygon([iso(1, 0, 0), iso(1, 1 - s, 0), iso(1, 1 - s, 1), iso(1, 0, 1)]))
-    ctx.fillPath()
-    ctx.setFillColor(redline)
-    ctx.addPath(polygon([iso(0, 0, z), iso(1, 0, z), iso(1, 1, z), iso(0, 1, z)]))
-    ctx.fillPath()
+    func face(_ pts: [(Double, Double, Double)], _ fill: CGColor, hatched: Bool = false) {
+        let path = polygon(pts.map { iso($0.0, $0.1, $0.2) })
+        ctx.addPath(path)
+        ctx.setFillColor(fill)
+        ctx.fillPath()
+        if hatched && !solid {
+            ctx.saveGState()
+            ctx.addPath(path)
+            ctx.clip()
+            let b = path.boundingBox, step = unit * 0.075
+            ctx.setStrokeColor(ink)
+            ctx.setLineWidth(line * 0.6)
+            var x = b.minX - b.height
+            while x < b.maxX {
+                ctx.move(to: CGPoint(x: x, y: b.minY))
+                ctx.addLine(to: CGPoint(x: x + b.height, y: b.maxY))
+                x += step
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
+        guard !solid else { return }
+        ctx.addPath(path)
+        ctx.setStrokeColor(ink)
+        ctx.setLineWidth(line)
+        ctx.setLineJoin(.round)
+        ctx.strokePath()
+    }
+    func rgb(_ hex: Int) -> CGColor {
+        CGColor(srgbRed: Double(hex >> 16 & 0xff) / 255, green: Double(hex >> 8 & 0xff) / 255, blue: Double(hex & 0xff) / 255, alpha: 1)
+    }
+    let white = solid ? rgb(0xa9bcf7) : rgb(0xffffff)
+    let left = solid ? ink : rgb(0xf1f4fd)
+    let right = solid ? rgb(0x1c3aa8) : rgb(0xe2e8fc)
+    let coreTop = solid ? rgb(0xa9bcf7) : rgb(0xd9e0fb)
+    let coreLeft = solid ? ink : rgb(0xd0d8f9)
+    let coreRight = solid ? rgb(0x1c3aa8) : rgb(0xc1ccf6)
+
+    // Base: the front quarter is cut away, its two cut faces hatched.
+    face([(0, 0, h), (1, 0, h), (1, 0.5, h), (0.5, 0.5, h), (0.5, 1, h), (0, 1, h)], white)
+    face([(0.5, 0.5, 0), (1, 0.5, 0), (1, 0.5, h), (0.5, 0.5, h)], left, hatched: true)
+    face([(0.5, 0.5, 0), (0.5, 1, 0), (0.5, 1, h), (0.5, 0.5, h)], right, hatched: true)
+    face([(0, 1, 0), (0.5, 1, 0), (0.5, 1, h), (0, 1, h)], left)
+    face([(1, 0, 0), (1, 0.5, 0), (1, 0.5, h), (1, 0, h)], right)
+
+    // Core.
+    let zc = h + g
+    face([(0, 0, zc + h), (1, 0, zc + h), (1, 1, zc + h), (0, 1, zc + h)], coreTop)
+    face([(0, 1, zc), (1, 1, zc), (1, 1, zc + h), (0, 1, zc + h)], coreLeft)
+    face([(1, 0, zc), (1, 1, zc), (1, 1, zc + h), (1, 0, zc + h)], coreRight)
+
+    // Cap: straight up to the ring, then tapered to a smaller top.
+    let zk = zc + h + g, zr = zk + h * ring, zt = zk + h
+    let a = (1 - taper) / 2, b = 1 - a
+    face([(0, 1, zk), (1, 1, zk), (1, 1, zr), (0, 1, zr)], left)
+    face([(1, 0, zk), (1, 1, zk), (1, 1, zr), (1, 0, zr)], right)
+    face([(0, 1, zr), (1, 1, zr), (b, b, zt), (a, b, zt)], left)
+    face([(1, 0, zr), (1, 1, zr), (b, b, zt), (b, a, zt)], right)
+    face([(0, 0, zr), (0, 1, zr), (a, b, zt), (a, a, zt)], white)
+    face([(0, 0, zr), (1, 0, zr), (b, a, zt), (a, a, zt)], white)
+    face([(a, a, zt), (b, a, zt), (b, b, zt), (a, b, zt)], white)
 }
 
 func drawIcon(in ctx: CGContext, pixels: Int) {
@@ -66,10 +125,9 @@ func drawIcon(in ctx: CGContext, pixels: Int) {
         ctx.strokePath()
     }
 
-    // 16 and 32 px use the opened-up small cut so the lift and seam survive.
+    // 16 and 32 px draw the stack solid so the slabs and gaps still read.
     let small = pixels <= 32
-    drawMark(in: ctx, height: small ? 560 : 520, centre: CGPoint(x: 512, y: 520),
-             gap: small ? 0.5 : 0.36, seam: small ? 0.08 : 0.04)
+    drawMark(in: ctx, height: small ? 720 : 640, centre: CGPoint(x: 512, y: 512), line: pixels <= 128 ? 14 : 7, solid: small)
     ctx.restoreGState()
 }
 

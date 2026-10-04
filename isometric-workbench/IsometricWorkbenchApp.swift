@@ -6,14 +6,34 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @main
+enum Launcher {
+    static func main() {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            TestHostApp.main()
+        } else {
+            IsometricWorkbenchApp.main()
+        }
+    }
+}
+
+/// Hosts the unit tests with no windows, so no UI (tooltips, timers,
+/// thumbnails) runs underneath them.
+struct TestHostApp: App {
+    init() {
+        // A test host that restores old document windows can't quit cleanly.
+        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+    }
+
+    var body: some Scene {
+        Settings { EmptyView() }
+    }
+}
+
 struct IsometricWorkbenchApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     init() {
-        var defaults: [String: Any] = ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false]
-        // A test host that restores old document windows can't quit cleanly.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { defaults["ApplePersistenceIgnoreState"] = true }
-        UserDefaults.standard.register(defaults: defaults)
+        UserDefaults.standard.register(defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
         // Listen for purchases (e.g. Ask to Buy approvals) from launch.
         _ = Store.shared
     }
@@ -28,8 +48,9 @@ struct IsometricWorkbenchApp: App {
         .commands { HomeCommands() }
 
         DocumentGroup(newDocument: { SceneDocument() }) { file in
-            DocumentView(document: file.document)
+            DocumentView(document: file.document, fileURL: file.fileURL)
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
         .commands { WorkbenchCommands() }
 
@@ -125,6 +146,17 @@ struct WorkbenchCommands: Commands {
                     Button(spec.name) { model?.addPrimitive(spec) }
                 }
             }
+            Menu("Align") {
+                ForEach(AlignEdge.allCases, id: \.self) { e in
+                    Button(e.title) { model?.align(e) }.disabled(!(model?.canAlign ?? false))
+                }
+                Divider()
+                Button("Distribute Horizontally") { model?.distribute(horizontally: true) }.disabled(!(model?.canDistribute ?? false))
+                Button("Distribute Vertically") { model?.distribute(horizontally: false) }.disabled(!(model?.canDistribute ?? false))
+            }
+            Button("Frame Selection") { model?.frameSelection() }
+                .keyboardShortcut("g", modifiers: [.command, .option])
+                .disabled(model == nil)
             Divider()
             Button("Combine") { model?.combineSelection() }
                 .keyboardShortcut("j")
