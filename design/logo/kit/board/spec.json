@@ -1,0 +1,40 @@
+{
+  "brand": "Isometric Workbench",
+  "tagline": "Animated exploded blueprints",
+  "brief": "A macOS app that turns simple parts into clean, animated isometric blueprints: exploded views, section cuts and labelled diagrams. For designers, technical illustrators and makers. The mark should feel precise and crafted, read at 16 px, and avoid the generic cube-and-grid look of the category.",
+  "adjectives": ["precise", "crafted", "clear", "quietly technical"],
+  "criteria": "Success: says 'exploded view' at a glance, distinct from plain isometric cubes, recognisable at 16 px, works in one colour.",
+  "mockups": ["app-icon", "website", "readme", "favicon-tab", "sticker", "social"],
+  "nav": ["Features", "Gallery", "Pro", "Download"],
+  "brand_color": "#2D55E8",
+  "tile_color": "#FBFBFA",
+  "greyscale": false,
+  "final": true,
+  "designer": "Isometric Workbench",
+  "concepts": [
+    {
+      "name": "Lift",
+      "symbol": "../symbol/iw-symbol-color.svg",
+      "lockup": "../lockups/iw-horizontal-color.svg",
+      "stacked": "../lockups/iw-stacked-color.svg",
+      "symbol_on_tile": "../symbol/iw-symbol-color.svg",
+      "stacked_on_tile": "../lockups/iw-stacked-color.svg",
+      "symbol_on_dark": "../symbol/iw-symbol-reversed.svg",
+      "lockup_on_dark": "../lockups/iw-horizontal-reversed.svg",
+      "stacked_on_dark": "../lockups/iw-stacked-reversed.svg",
+      "idea": "The top of the block lifts off: an exploded view in its simplest form.",
+      "rationale": [
+        "Shows the app's signature move, exploding a part, in three flat shapes",
+        "The moving part is marked in Redline, the body in Blueprint blue: both palettes ship in the app",
+        "Built on the same 30° isometric grid the app draws on, so it sits naturally on the canvas",
+        "A small-size cut opens the gaps so the lift still reads at 16 px"
+      ]
+    }
+  ],
+  "recommendation": "Lift: one clear idea, ownable through the gap, and strong from the 16 px favicon to the App Store tile.",
+  "next_steps": [
+    "Run a trademark search before public launch",
+    "Use the reversed files on dark and blue backgrounds",
+    "Keep build_kit.py and make-icon.swift in sync if the geometry changes"
+  ]
+}

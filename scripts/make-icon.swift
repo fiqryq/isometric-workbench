@@ -4,18 +4,12 @@
 
 import AppKit
 
+// Brand colours and mark geometry match design/logo/build_kit.py.
 let ink = CGColor(srgbRed: 0x2d / 255, green: 0x55 / 255, blue: 0xe8 / 255, alpha: 1)
+let redline = CGColor(srgbRed: 0xe0 / 255, green: 0x4a / 255, blue: 0x2f / 255, alpha: 1)
 let paper = CGColor(srgbRed: 0xfb / 255, green: 0xfb / 255, blue: 0xfa / 255, alpha: 1)
-let tint = CGColor(srgbRed: 0xdf / 255, green: 0xe6 / 255, blue: 0xfc / 255, alpha: 1)
-let white = CGColor(gray: 1, alpha: 1)
 
 let cos30 = cos(Double.pi / 6)
-
-/// Isometric projection on a 1024 canvas, CG coordinates (y up).
-func iso(_ x: Double, _ y: Double, _ z: Double, unit: Double = 226, origin: CGPoint = CGPoint(x: 534, y: 512)) -> CGPoint {
-    CGPoint(x: origin.x + (x - y) * cos30 * unit,
-            y: origin.y + z * unit - (x + y) * 0.5 * unit)
-}
 
 func polygon(_ points: [CGPoint]) -> CGPath {
     let path = CGMutablePath()
@@ -24,15 +18,24 @@ func polygon(_ points: [CGPoint]) -> CGPath {
     return path
 }
 
-/// A box from (x0,y0,z0) to (x1,y1,z1); returns its three visible faces: top, left (y = y1), right (x = x1).
-func box(_ x0: Double, _ y0: Double, _ z0: Double, _ x1: Double, _ y1: Double, _ z1: Double) -> (top: CGPath, left: CGPath, right: CGPath) {
-    let top = polygon([iso(x0, y0, z1), iso(x1, y0, z1), iso(x1, y1, z1), iso(x0, y1, z1)])
-    let left = polygon([iso(x0, y1, z0), iso(x1, y1, z0), iso(x1, y1, z1), iso(x0, y1, z1)])
-    let right = polygon([iso(x1, y0, z0), iso(x1, y1, z0), iso(x1, y1, z1), iso(x1, y0, z1)])
-    return (top, left, right)
+/// The Lift mark: an open block whose top face has lifted off. `gap` and `seam` are in cube-edge units.
+func drawMark(in ctx: CGContext, height: Double, centre: CGPoint, gap: Double, seam: Double) {
+    let unit = height / (2 + gap)
+    let origin = CGPoint(x: centre.x, y: centre.y - height / 2 + unit)
+    func iso(_ x: Double, _ y: Double, _ z: Double) -> CGPoint {
+        CGPoint(x: origin.x + (x - y) * cos30 * unit, y: origin.y + z * unit - (x + y) * 0.5 * unit)
+    }
+    let s = seam, z = 1 + gap
+    ctx.setFillColor(ink)
+    ctx.addPath(polygon([iso(0, 1, 0), iso(1 - s, 1, 0), iso(1 - s, 1, 1), iso(0, 1, 1)]))
+    ctx.addPath(polygon([iso(1, 0, 0), iso(1, 1 - s, 0), iso(1, 1 - s, 1), iso(1, 0, 1)]))
+    ctx.fillPath()
+    ctx.setFillColor(redline)
+    ctx.addPath(polygon([iso(0, 0, z), iso(1, 0, z), iso(1, 1, z), iso(0, 1, z)]))
+    ctx.fillPath()
 }
 
-func drawIcon(in ctx: CGContext) {
+func drawIcon(in ctx: CGContext, pixels: Int) {
     // macOS icon grid: 824pt body centred on a 1024 canvas.
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
     let squircle = CGPath(roundedRect: body, cornerWidth: 185, cornerHeight: 185, transform: nil)
@@ -48,78 +51,25 @@ func drawIcon(in ctx: CGContext) {
     ctx.addPath(squircle)
     ctx.clip()
 
-    // Isometric grid.
-    ctx.setStrokeColor(ink.copy(alpha: 0.09)!)
-    ctx.setLineWidth(3)
-    let step = 62.0
-    for i in -20...20 {
-        let c = 512 + Double(i) * step
-        for slope in [0.5773502692, -0.5773502692] {
-            ctx.move(to: CGPoint(x: 0, y: c - slope * 512))
-            ctx.addLine(to: CGPoint(x: 1024, y: c + slope * 512))
-        }
-    }
-    ctx.strokePath()
-
-    let stroke = 15.0
-    ctx.setLineJoin(.round)
-    ctx.setLineCap(.round)
-
-    func paint(_ faces: (top: CGPath, left: CGPath, right: CGPath)) {
-        for (face, fill) in [(faces.top, white), (faces.left, tint), (faces.right, white)] {
-            ctx.addPath(face)
-            ctx.setFillColor(fill)
-            ctx.fillPath()
-        }
-        ctx.saveGState()
-        ctx.addPath(faces.right)
-        ctx.clip()
-        ctx.setStrokeColor(ink.copy(alpha: 0.55)!)
-        ctx.setLineWidth(6)
-        for i in stride(from: -1200.0, through: 1200, by: 34) {
-            ctx.move(to: CGPoint(x: i, y: 0))
-            ctx.addLine(to: CGPoint(x: i + 1024, y: 1024))
+    // Isometric grid; below 128 px it only adds noise.
+    if pixels >= 128 {
+        ctx.setStrokeColor(ink.copy(alpha: 0.08)!)
+        ctx.setLineWidth(3)
+        let step = 62.0
+        for i in -20...20 {
+            let c = 512 + Double(i) * step
+            for slope in [0.5773502692, -0.5773502692] {
+                ctx.move(to: CGPoint(x: 0, y: c - slope * 512))
+                ctx.addLine(to: CGPoint(x: 1024, y: c + slope * 512))
+            }
         }
         ctx.strokePath()
-        ctx.restoreGState()
-        for face in [faces.top, faces.left, faces.right] {
-            ctx.addPath(face)
-        }
-        ctx.setStrokeColor(ink)
-        ctx.setLineWidth(stroke)
-        ctx.strokePath()
     }
 
-    // A slab with a block pushed up out of its back half.
-    paint(box(-0.75, -0.75, -0.55, 0.75, 0.75, -0.05))
-    paint(box(-0.75, -0.75, -0.05, 0.75, 0.05, 0.75))
-
-    // Dimension line along the slab's left edge.
-    let offset = 0.28
-    let a = iso(-0.75, 0.75 + offset, -0.55)
-    let b = iso(0.75, 0.75 + offset, -0.55)
-    ctx.setStrokeColor(ink)
-    ctx.setLineWidth(8)
-    for (p, q) in [(iso(-0.75, 0.80, -0.55), iso(-0.75, 0.75 + offset + 0.08, -0.55)),
-                   (iso(0.75, 0.80, -0.55), iso(0.75, 0.75 + offset + 0.08, -0.55))] {
-        ctx.move(to: p)
-        ctx.addLine(to: q)
-    }
-    ctx.move(to: a)
-    ctx.addLine(to: b)
-    ctx.strokePath()
-    let dx = b.x - a.x, dy = b.y - a.y
-    let len = (dx * dx + dy * dy).squareRoot()
-    let ux = dx / len, uy = dy / len
-    let head = 34.0, wing = 15.0
-    ctx.setFillColor(ink)
-    for (tip, dir) in [(a, 1.0), (b, -1.0)] {
-        let base = CGPoint(x: tip.x + ux * head * dir, y: tip.y + uy * head * dir)
-        ctx.addPath(polygon([tip,
-                             CGPoint(x: base.x - uy * wing, y: base.y + ux * wing),
-                             CGPoint(x: base.x + uy * wing, y: base.y - ux * wing)]))
-        ctx.fillPath()
-    }
+    // 16 and 32 px use the opened-up small cut so the lift and seam survive.
+    let small = pixels <= 32
+    drawMark(in: ctx, height: small ? 560 : 520, centre: CGPoint(x: 512, y: 520),
+             gap: small ? 0.5 : 0.36, seam: small ? 0.08 : 0.04)
     ctx.restoreGState()
 }
 
@@ -130,7 +80,7 @@ func render(pixels: Int) -> Data {
     let ctx = NSGraphicsContext(bitmapImageRep: rep)!.cgContext
     ctx.clear(CGRect(x: 0, y: 0, width: pixels, height: pixels))
     ctx.scaleBy(x: CGFloat(pixels) / 1024, y: CGFloat(pixels) / 1024)
-    drawIcon(in: ctx)
+    drawIcon(in: ctx, pixels: pixels)
     return rep.representation(using: .png, properties: [:])!
 }
 

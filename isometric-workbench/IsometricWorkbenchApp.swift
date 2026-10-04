@@ -7,12 +7,26 @@ import UniformTypeIdentifiers
 
 @main
 struct IsometricWorkbenchApp: App {
+    @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
+
     init() {
-        // Launch into a new untitled document instead of the Open panel.
-        UserDefaults.standard.register(defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
+        var defaults: [String: Any] = ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false]
+        // A test host that restores old document windows can't quit cleanly.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { defaults["ApplePersistenceIgnoreState"] = true }
+        UserDefaults.standard.register(defaults: defaults)
+        // Listen for purchases (e.g. Ask to Buy approvals) from launch.
+        _ = Store.shared
     }
 
     var body: some Scene {
+        Window("Home", id: HomeWindow.id) {
+            HomeView()
+                .frame(minWidth: 760, minHeight: 480)
+                .modifier(CaptureOpenWindow())
+        }
+        .defaultSize(width: 1180, height: 760)
+        .commands { HomeCommands() }
+
         DocumentGroup(newDocument: { SceneDocument() }) { file in
             DocumentView(document: file.document)
         }
@@ -27,6 +41,32 @@ struct IsometricWorkbenchApp: App {
 
 extension FocusedValues {
     @Entry var sceneModel: SceneModel?
+}
+
+struct CaptureOpenWindow: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear { HomeWindow.openAction = openWindow }
+    }
+}
+
+struct HomeCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New") { HomeActions.createBlank() }
+                .keyboardShortcut("n")
+            Button("Open…") { NSDocumentController.shared.openDocument(nil) }
+                .keyboardShortcut("o")
+        }
+        CommandGroup(before: .windowList) {
+            Button("Home") { openWindow(id: HomeWindow.id) }
+                .keyboardShortcut("0", modifiers: [.command, .option])
+            Divider()
+        }
+    }
 }
 
 struct WorkbenchCommands: Commands {
