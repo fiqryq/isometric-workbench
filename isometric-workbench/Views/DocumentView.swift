@@ -6,74 +6,104 @@ import UniformTypeIdentifiers
 
 struct DocumentView: View {
     @ObservedObject var document: SceneDocument
+    var fileURL: URL?
     @Environment(\.undoManager) private var undoManager
-    @State private var showInspector = true
+    @AppStorage("showLayers") private var showLayers = true
+    @AppStorage("showInspector") private var showInspector = true
     @AppStorage("showTimeline") private var showTimeline = true
+    @AppStorage("layersWidth") private var layersWidth = 240.0
+    @AppStorage("inspectorWidth") private var inspectorWidth = 300.0
     @AppStorage("timelineHeight") private var timelineHeight = 190.0
     @State private var dragStartHeight: Double?
 
     var body: some View {
         let model = document.model
-        NavigationSplitView {
-            SidebarView(model: model)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 236, max: 340)
-        } detail: {
+        HStack(spacing: 0) {
+            if showLayers {
+                SidebarView(model: model, title: title, showLayers: $showLayers)
+                    .frame(width: layersWidth)
+                    .background(Chrome.panelBackground)
+                SideResizer(width: $layersWidth, range: 200...380, direction: 1)
+            }
             VStack(spacing: 0) {
-                PageTabs(model: model)
-                Divider()
                 Viewport(model: model)
                     .frame(minWidth: 420, minHeight: 320)
-                Divider()
-                TransportBar(model: model, showTimeline: $showTimeline)
+                    .overlay(alignment: .top) {
+                        CanvasToolbar(model: model, showLayers: $showLayers, showInspector: $showInspector, showTimeline: $showTimeline)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 8)
+                            // Leave the traffic lights clear when the layers are hidden.
+                            .padding(.leading, showLayers ? 0 : Chrome.trafficLightsWidth)
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        CanvasStatus(model: model).padding(10)
+                    }
                 if showTimeline {
+                    Divider()
+                    TransportBar(model: model, showTimeline: $showTimeline)
                     resizeHandle
                     TimelinePanel(model: model)
                         .frame(height: timelineHeight)
                 }
-                Divider()
-                StatusBar(model: model)
             }
-            .inspector(isPresented: $showInspector) {
-                InspectorView(model: model)
-                    .inspectorColumnWidth(min: 270, ideal: 310, max: 440)
+            if showInspector {
+                SideResizer(width: $inspectorWidth, range: 270...440, direction: -1)
+                VStack(spacing: 0) {
+                    InspectorHeader(model: model, showInspector: $showInspector)
+                    InspectorView(model: model)
+                }
+                .frame(width: inspectorWidth)
+                .background(Chrome.panelBackground)
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ToolPicker(model: model)
-            }
-            ToolbarItemGroup {
-                Menu {
-                    InsertMenuItems(model: model)
-                } label: {
-                    Label("Insert", systemImage: "plus.square.on.square")
-                }
-                .help("Add decals, dimensions or an SVG sketch")
-                Button { model.zoomToFit() } label: { Label("Zoom to Fit", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
-                    .help("Zoom to fit (F)")
-                Button { model.combineSelection() } label: { Label("Combine", systemImage: "square.on.square.intersection.dashed") }
-                    .help("Combine the selected parts into the first one")
-                    .disabled(model.selection.count < 2)
-                Menu {
-                    ExportMenuItems(model: model)
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .help("Export the current frame")
-                Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.trailing") }
-                    .help("Show or hide the inspector")
-            }
-        }
+        .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: Binding(get: { model.presentVideoExport }, set: { model.presentVideoExport = $0 })) {
             VideoExportSheet(model: model)
         }
         .sheet(isPresented: Binding(get: { model.presentPaywall }, set: { model.presentPaywall = $0 })) {
             PaywallView()
         }
-        .navigationSubtitle(model.pages.count > 1 ? model.activePageName : "")
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { _, new in model.undoManager = new }
         .focusedSceneValue(\.sceneModel, model)
+    }
+
+    private var title: String {
+        fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+    }
+}
+
+/// The inspector's top row, as in Sketch: play on the left, export and
+/// hiding the column on the right.
+struct InspectorHeader: View {
+    let model: SceneModel
+    @Binding var showInspector: Bool
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button { model.togglePlay() } label: { icon(model.isPlaying ? "pause.fill" : "play.fill", size: 12) }
+                .help(model.isPlaying ? "Pause" : "Play")
+            Spacer()
+            Menu {
+                ExportMenuItems(model: model)
+            } label: {
+                icon("square.and.arrow.up")
+            }
+            .help("Export")
+            Button { showInspector = false } label: { icon("sidebar.right") }
+                .help("Hide the inspector (⌥⌘I)")
+                .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(InspectorIconButtonStyle())
+        .padding(.horizontal, 10)
+        .frame(height: Chrome.headerHeight)
+        .background(WindowDragArea())
+    }
+
+    private func icon(_ symbol: String, size: CGFloat = 13) -> some View {
+        Image(systemName: symbol).font(.system(size: size, weight: .regular)).foregroundStyle(.primary.opacity(0.75)).frame(width: 28, height: 28)
     }
 }
 
@@ -101,25 +131,8 @@ struct ExportMenuItems: View {
         Button("Export PDF…") { Exporter.save(model, as: .pdf) }
         Button("Export PNG…") { Exporter.save(model, as: .png) }
         Divider()
-        Button("Export Video or GIF…") { model.presentVideoExport = true }
+        Button("Export Animation…") { model.presentVideoExport = true }
         Divider()
         Button("Copy as SVG") { Exporter.copySVG(model) }
-    }
-}
-
-struct ToolPicker: View {
-    @Bindable var model: SceneModel
-
-    var body: some View {
-        Picker("Tool", selection: $model.tool) {
-            ForEach(Tool.allCases) { t in
-                Label(t.title, systemImage: t.symbol)
-                    .help("\(t.title) (\(String(t.key).uppercased()))")
-                    .tag(t)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelStyle(.iconOnly)
-        .help("Tools")
     }
 }

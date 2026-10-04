@@ -250,37 +250,104 @@ public struct Guide: Sendable, Hashable, Identifiable {
     }
 }
 
-/// The drawing frame: grid, FIG number, title and year.
-public struct Sheet: Sendable, Hashable {
-    public var visible = false
+/// A Figma-style frame: a named area on the page that holds parts. It hugs its
+/// parts unless it has a fixed size, can fill and clip, and may carry the
+/// blueprint marks (grid, FIG number, title and year). Frames are optional;
+/// without one the page is an open canvas.
+public struct Artboard: Sendable, Hashable, Identifiable {
+    public var id = makeID()
+    public var name = "Frame"
+    /// Parts in this frame. A part sits in at most one frame per page.
+    public var children: [Part.ID] = []
+    /// Fixed size, or nil to hug the children.
+    public var size: Vec2?
+    /// Top-left on screen, or nil to centre on the children.
+    public var origin: Vec2?
+    /// Background colour, or nil for the style's paper tint.
+    public var fill: String?
+    /// Hides what falls outside the frame.
+    public var clip = false
+    /// Draws the grid, FIG number, title and year.
+    public var marks = false
     public var fig = "FIG.001"
     public var title = "Untitled Drawing"
     public var year = String(Calendar.current.component(.year, from: Date()))
     public var grid = 16.0
     public var margin = 80.0
-    /// Fixed size, or nil to fit the drawing like the plugin's examples.
-    public var size: Vec2?
+    /// Set when read from an old drawing sheet: the frame takes every part.
+    var adoptsAll = false
 
-    public init() {}
+    public init(name: String = "Frame", children: [Part.ID] = [], marks: Bool = false) {
+        self.name = name
+        self.children = children
+        self.marks = marks
+    }
 
-    init(json: JSONValue?) {
-        guard let o = json?.object else { return }
-        visible = o["visible"]?.isTruthy ?? true
+    public var hugs: Bool { size == nil }
+
+    init(json: JSONValue) {
+        let o = json.object ?? [:]
+        id = o["id"]?.string ?? id
+        name = o["name"]?.string ?? name
+        children = (o["children"]?.array ?? []).compactMap(\.string)
+        if let a = o["size"]?.array, a.count >= 2 { size = Vec2(a[0].jsNumber ?? 400, a[1].jsNumber ?? 300) }
+        if let a = o["origin"]?.array, a.count >= 2 { origin = Vec2(a[0].jsNumber ?? 0, a[1].jsNumber ?? 0) }
+        fill = o["fill"]?.string
+        clip = o["clip"]?.isTruthy ?? false
+        marks = o["marks"]?.isTruthy ?? false
         fig = o["fig"]?.string ?? fig
         title = o["title"]?.string ?? title
         year = o["year"]?.string ?? o["year"]?.jsNumber.map(jsNumberString) ?? year
         grid = o["grid"]?.jsNumber ?? grid
         margin = o["margin"]?.jsNumber ?? margin
-        if let a = o["size"]?.array, a.count >= 2 { size = Vec2(a[0].jsNumber ?? 1200, a[1].jsNumber ?? 800) }
+    }
+
+    /// The single drawing sheet older files have; nil when it was hidden.
+    static func legacySheet(_ json: JSONValue?) -> Artboard? {
+        guard let o = json?.object, o["visible"]?.isTruthy ?? true else { return nil }
+        var a = Artboard(json: json!)
+        a.id = makeID()
+        a.name = o["name"]?.string ?? "Frame"
+        a.marks = o["marks"]?.isTruthy ?? true
+        a.adoptsAll = true
+        return a
     }
 
     var json: JSONValue {
         var o: [String: JSONValue] = [
-            "visible": .bool(visible), "fig": .string(fig), "title": .string(title), "year": .string(year),
-            "grid": .number(grid), "margin": .number(margin),
+            "id": .string(id), "name": .string(name), "children": .array(children.map(JSONValue.string)),
+            "clip": .bool(clip), "marks": .bool(marks),
         ]
-        o["size"] = size.map { [.number($0.x), .number($0.y)] } ?? "auto"
+        if let size { o["size"] = [.number(size.x), .number(size.y)] }
+        if let origin { o["origin"] = [.number(origin.x), .number(origin.y)] }
+        if let fill { o["fill"] = .string(fill) }
+        if marks {
+            o["fig"] = .string(fig)
+            o["title"] = .string(title)
+            o["year"] = .string(year)
+            o["grid"] = .number(grid)
+            o["margin"] = .number(margin)
+        }
         return .object(o)
+    }
+}
+
+extension [Artboard] {
+    /// The frame holding `part`, if any.
+    public func index(holding part: Part.ID) -> Int? { firstIndex { $0.children.contains(part) } }
+
+    /// Moves `parts` into the frame `id`, or out of every frame when `id` is nil.
+    public mutating func place(_ parts: [Part.ID], in id: Artboard.ID?) {
+        let set = Set(parts)
+        for i in indices { self[i].children.removeAll { set.contains($0) } }
+        if let id, let i = firstIndex(where: { $0.id == id }) { self[i].children += parts }
+    }
+
+    mutating func adoptLegacy(_ parts: [Part.ID]) {
+        for i in indices where self[i].adoptsAll {
+            self[i].children = parts
+            self[i].adoptsAll = false
+        }
     }
 }
 
@@ -298,7 +365,8 @@ public struct SceneFile: Sendable, Hashable {
     public var parts: [Part] = []
     /// Projection angle: 30 (isometric) or 26.565 (2:1 pixel).
     public var angle = 30.0
-    public var sheet = Sheet()
+    /// The active page's frames, back to front.
+    public var frames: [Artboard] = []
     public var guides: [Guide] = []
     public var dimensions: [DimensionLine] = []
     public var shapes: [FlatShape] = []
@@ -314,7 +382,7 @@ public struct SceneFile: Sendable, Hashable {
     public init() {}
 
     static let knownKeys: Set<String> = [
-        "v", "name", "style", "duration", "fps", "camera", "parts", "angle", "sheet", "guides", "dimensions", "shapes",
+        "v", "name", "style", "duration", "fps", "camera", "parts", "angle", "sheet", "frames", "guides", "dimensions", "shapes",
         "decals", "layers", "drawOrder", "pages", "activePage", "meta",
     ]
 
@@ -328,7 +396,7 @@ public struct SceneFile: Sendable, Hashable {
         camera = Animatable(json: o["camera"])
         parts = (o["parts"]?.array ?? []).map(Part.init(json:))
         angle = o["angle"]?.jsNumber ?? 30
-        sheet = Sheet(json: o["sheet"])
+        frames = o["frames"]?.array.map { $0.map(Artboard.init(json:)) } ?? Artboard.legacySheet(o["sheet"]).map { [$0] } ?? []
         guides = (o["guides"]?.array ?? []).map(Guide.init(json:))
         dimensions = (o["dimensions"]?.array ?? []).map(DimensionLine.init(json:))
         shapes = (o["shapes"]?.array ?? []).map(FlatShape.init(json:))
@@ -338,6 +406,9 @@ public struct SceneFile: Sendable, Hashable {
         pages = (o["pages"]?.array ?? []).map(Page.init(json:))
         activePage = o["activePage"]?.string ?? pages.first?.id
         if !pages.isEmpty, activePageIndex == nil { activePage = pages[0].id }
+        let ids = parts.map(\.id)
+        frames.adoptLegacy(ids)
+        for i in pages.indices { pages[i].frames.adoptLegacy(ids) }
         extra = o.filter { !Self.knownKeys.contains($0.key) }
     }
 
@@ -351,7 +422,7 @@ public struct SceneFile: Sendable, Hashable {
         o["camera"] = ["base": camera.baseJSON, "keys": camera.keysJSON]
         o["parts"] = .array(parts.map(\.json))
         o["angle"] = .number(angle)
-        o["sheet"] = sheet.json
+        if !frames.isEmpty { o["frames"] = .array(frames.map(\.json)) }
         if !guides.isEmpty { o["guides"] = .array(guides.map(\.json)) }
         if !dimensions.isEmpty { o["dimensions"] = .array(dimensions.map(\.json)) }
         if !shapes.isEmpty { o["shapes"] = .array(shapes.map(\.json)) }

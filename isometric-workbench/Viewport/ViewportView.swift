@@ -49,7 +49,7 @@ final class ViewportView: NSView {
     private var ringCache: (key: String, rings: [(RingPick, [(Vec2, Vec2)])])?
 
     private enum DragMode {
-        case move, lift, spin, pan, orbit, annotation
+        case move, lift, spin, pan, orbit, annotation, frameMove, frameResize, frameDraw
     }
 
     private struct Drag {
@@ -63,6 +63,12 @@ final class ViewportView: NSView {
         var annotation: AnnotationRef?
         var target: DrawTarget?
         var planeStart = Vec2.zero
+        /// Which edges a frame resize moves: -1 min, 1 max, 0 neither.
+        var handle = (x: 0, y: 0)
+        var board: Artboard.ID?
+        var boardStart = Box2.empty
+        /// The frames when the drag began, for dropping parts into them.
+        var boards: [SheetLayout] = []
     }
 
     init(model: SceneModel) {
@@ -70,6 +76,8 @@ final class ViewportView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        // Since the macOS 14 SDK views don't clip by default; panned art would paint over the page tabs.
+        clipsToBounds = true
     }
 
     @available(*, unavailable)
@@ -97,7 +105,7 @@ final class ViewportView: NSView {
     }
 
     override func resetCursorRects() {
-        if model.tool.draws { addCursorRect(bounds, cursor: .crosshair) }
+        if model.tool.draws || model.tool == .frame { addCursorRect(bounds, cursor: .crosshair) }
     }
 
     // MARK: - Coordinates
@@ -113,6 +121,11 @@ final class ViewportView: NSView {
 
     /// One screen point in scene units.
     private var px: Double { 1 / model.zoom }
+
+    private func viewRect(_ b: Box2) -> CGRect {
+        CGRect(x: b.minX * model.zoom + viewCenter.x + model.pan.x, y: b.minY * model.zoom + viewCenter.y + model.pan.y,
+               width: b.width * model.zoom, height: b.height * model.zoom)
+    }
 
     // MARK: - Drawing
 
@@ -142,19 +155,16 @@ final class ViewportView: NSView {
         ctx.saveGState()
         ctx.translateBy(x: viewCenter.x + model.pan.x, y: viewCenter.y + model.pan.y)
         ctx.scaleBy(x: model.zoom, y: model.zoom)
-        if frame.sheet == nil {
-            ctx.setFillColor(RGB(hex: style.bg).cgColor)
-            ctx.fill(frame.bounds.cgRect)
-        }
         FramePainter.paint(frame, in: ctx, background: false)
         paintSelection(frame, in: ctx)
         if model.tool == .rings { paintRings(frame, in: ctx) }
         paintSketches(frame, in: ctx)
         ctx.restoreGState()
+        paintFrameChrome(frame, in: ctx)
 
         if frame.items.isEmpty && model.scene.isEmpty { paintEmptyHint(in: ctx) }
 
-        if !didInitialFit, frame.complete, !frame.items.isEmpty || frame.sheet != nil {
+        if !didInitialFit, frame.complete, !frame.items.isEmpty || !frame.boards.isEmpty {
             didInitialFit = true
             DispatchQueue.main.async { [model] in model.zoomToFit() }
         }
@@ -327,8 +337,74 @@ final class ViewportView: NSView {
         }
     }
 
+    // MARK: - Frame
+
+    private static let frameLabelFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+
+    /// A frame's name above its top-left corner, in view points.
+    private func frameLabelRect(_ board: SheetLayout) -> CGRect {
+        let r = viewRect(board.rect)
+        let size = (board.name as NSString).size(withAttributes: [.font: Self.frameLabelFont])
+        return CGRect(x: r.minX, y: r.minY - size.height - 4, width: min(size.width.rounded(.up), max(0, r.width)), height: size.height)
+    }
+
+    /// Edges under `p` when it's on a frame's outline.
+    private func frameHandle(at p: CGPoint, _ rect: Box2) -> (x: Int, y: Int)? {
+        let r = viewRect(rect), tol = 5.0
+        guard r.insetBy(dx: -tol, dy: -tol).contains(p) else { return nil }
+        let x = abs(p.x - r.minX) <= tol ? -1 : abs(p.x - r.maxX) <= tol ? 1 : 0
+        let y = abs(p.y - r.minY) <= tol ? -1 : abs(p.y - r.maxY) <= tol ? 1 : 0
+        return x == 0 && y == 0 ? nil : (x, y)
+    }
+
+    private var selectedLayout: SheetLayout? { frameCache?.board(model.selectedFrame) }
+
+    /// Figma-style name labels, the frame being drawn, and for the selected
+    /// frame an outline, corner handles and its size.
+    private func paintFrameChrome(_ frame: Frame, in ctx: CGContext) {
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingTail
+        let quiet = NSColor(cgColor: RGB(hex: frame.style.bg).mix(.black, 0.55).cgColor) ?? .gray
+        let accentInk = NSColor(cgColor: accent) ?? .controlAccentColor
+        for b in frame.boards {
+            let ink = b.id == model.selectedFrame ? accentInk : quiet
+            (b.name as NSString).draw(in: frameLabelRect(b), withAttributes: [.font: Self.frameLabelFont, .foregroundColor: ink, .paragraphStyle: para])
+        }
+        if let d = drag, d.mode == .frameDraw, d.moved {
+            let r = CGRect(x: min(d.start.x, d.last.x), y: min(d.start.y, d.last.y), width: abs(d.last.x - d.start.x), height: abs(d.last.y - d.start.y))
+            ctx.saveGState()
+            ctx.setFillColor(accent.copy(alpha: 0.06) ?? accent)
+            ctx.fill(r)
+            ctx.setStrokeColor(accent)
+            ctx.setLineWidth(1)
+            ctx.stroke(r)
+            ctx.restoreGState()
+        }
+        guard let b = frame.board(model.selectedFrame) else { return }
+        let r = viewRect(b.rect)
+        ctx.saveGState()
+        ctx.setStrokeColor(accent)
+        ctx.setLineWidth(1)
+        ctx.stroke(r)
+        for c in [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)] {
+            let h = CGRect(x: c.x - 3.5, y: c.y - 3.5, width: 7, height: 7)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fill(h)
+            ctx.stroke(h)
+        }
+        let size = "\(jsNumberString(b.rect.width)) × \(jsNumberString(b.rect.height))" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.white]
+        let m = size.size(withAttributes: attrs)
+        let pill = CGRect(x: r.midX - m.width / 2 - 5, y: r.maxY + 6, width: m.width + 10, height: m.height + 2)
+        ctx.setFillColor(accent)
+        ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil))
+        ctx.fillPath()
+        ctx.restoreGState()
+        size.draw(at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: attrs)
+    }
+
     private func paintEmptyHint(in ctx: CGContext) {
-        let text = "Add a primitive, open an example, or draw with the shape tools" as NSString
+        let text = "Add a primitive with + or draw with the shape tools" as NSString
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor,
         ]
@@ -401,6 +477,7 @@ final class ViewportView: NSView {
         guard let frame = frameCache else { return nil }
         let s = scenePoint(p)
         for item in frame.items.reversed() where item.box.insetBy(-2).contains(s) {
+            if let b = frame.board(item.board), b.clip, !b.rect.contains(s) { continue }
             let q = s - item.offset
             for run in item.runs.reversed() {
                 for (i, poly) in run.polys.enumerated() where run.boxes[i].insetBy(-1).contains(q) && Loop2D.contains(q, in: poly) {
@@ -471,6 +548,14 @@ final class ViewportView: NSView {
     // MARK: - Mouse
 
     override func mouseMoved(with event: NSEvent) {
+        if model.tool == .select, let b = selectedLayout {
+            switch frameHandle(at: local(event), b.rect) {
+            case let h? where h.y == 0: NSCursor.resizeLeftRight.set()
+            case let h? where h.x == 0: NSCursor.resizeUpDown.set()
+            case .some: NSCursor.crosshair.set()
+            case nil: NSCursor.arrow.set()
+            }
+        }
         guard penTarget != nil else { return }
         hover = scenePoint(local(event))
         needsDisplay = true
@@ -479,6 +564,27 @@ final class ViewportView: NSView {
     override func mouseExited(with event: NSEvent) {
         hover = nil
         if penTarget != nil { needsDisplay = true }
+    }
+
+    // Middle-button drag pans the canvas with any tool, as in Figma and Sketch.
+    private var middlePan: (start: CGPoint, startPan: Vec2)?
+
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { return super.otherMouseDown(with: event) }
+        middlePan = (local(event), model.pan)
+        NSCursor.closedHand.push()
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        guard let m = middlePan else { return super.otherMouseDragged(with: event) }
+        let p = local(event)
+        model.pan = m.startPan + Vec2(p.x - m.start.x, p.y - m.start.y)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        guard middlePan != nil else { return super.otherMouseUp(with: event) }
+        middlePan = nil
+        NSCursor.pop()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -495,10 +601,22 @@ final class ViewportView: NSView {
         case .rings:
             ringClick(p, extend: event.modifierFlags.contains(.shift))
             return
+        case .frame:
+            drag = Drag(mode: .frameDraw, start: p, last: p)
+            return
         case .select:
             break
         }
         let flags = event.modifierFlags
+        if let b = selectedLayout, let handle = frameHandle(at: p, b.rect) {
+            drag = Drag(mode: .frameResize, start: p, last: p, handle: handle, board: b.id, boardStart: b.rect)
+            return
+        }
+        if let b = frameCache?.boards.last(where: { frameLabelRect($0).contains(p) }) {
+            model.selectFrame(b.id)
+            drag = Drag(mode: .frameMove, start: p, last: p, board: b.id, boardStart: b.rect)
+            return
+        }
         let h = hit(p)
         if flags.contains(.command), let h, let run = h.run, run.kind == .solid, let face = run.face {
             model.toggleFace(h.part.id, face)
@@ -523,7 +641,7 @@ final class ViewportView: NSView {
                 model.pickedFaces.removeAll { $0.partID != h.part.id }
             }
             let mode: DragMode = flags.contains(.option) ? .spin : extend ? .lift : .move
-            drag = Drag(mode: mode, start: p, last: p, hitPart: h.part.id, extend: extend)
+            drag = Drag(mode: mode, start: p, last: p, hitPart: h.part.id, extend: extend, boards: frameCache?.boards ?? [])
         } else {
             drag = Drag(mode: flags.contains(.option) ? .orbit : .pan, start: p, last: p, startPan: model.pan)
         }
@@ -557,6 +675,25 @@ final class ViewportView: NSView {
             model.dragAnnotation(a, by: snap(q - d.planeStart))
         case .move, .lift, .spin:
             transformSelection(dx: dx, dy: dy, mode: d.mode)
+        case .frameMove:
+            guard let id = d.board else { return }
+            let base = model.gestureBase, t = model.frameTime
+            model.updateGesture { SceneModel.moveFrame(id, by: Vec2(dx.rounded(), dy.rounded()), in: &$0, from: base, at: t) }
+        case .frameDraw:
+            needsDisplay = true
+        case .frameResize:
+            guard let id = d.board else { return }
+            let b0 = d.boardStart, h = d.handle
+            var b = b0
+            if h.x < 0 { b.minX = min(b0.minX + dx, b0.maxX - 16).rounded() }
+            if h.x > 0 { b.maxX = max(b0.maxX + dx, b0.minX + 16).rounded() }
+            if h.y < 0 { b.minY = min(b0.minY + dy, b0.maxY - 16).rounded() }
+            if h.y > 0 { b.maxY = max(b0.maxY + dy, b0.minY + 16).rounded() }
+            model.updateGesture { s in
+                guard let i = s.frames.firstIndex(where: { $0.id == id }) else { return }
+                s.frames[i].origin = Vec2(b.minX, b.minY)
+                s.frames[i].size = Vec2(b.width, b.height)
+            }
         }
     }
 
@@ -570,18 +707,32 @@ final class ViewportView: NSView {
         }
         guard let d = drag else { return }
         drag = nil
+        if d.mode == .frameDraw {
+            let a = scenePoint(d.start), b = scenePoint(d.last)
+            let rect = d.moved
+                ? Box2(minX: min(a.x, b.x), minY: min(a.y, b.y), maxX: max(a.x, b.x), maxY: max(a.y, b.y))
+                : Box2(minX: a.x, minY: a.y, maxX: a.x + 400, maxY: a.y + 300)
+            model.addFrame(rect)
+            model.tool = .select
+            needsDisplay = true
+            return
+        }
         if d.moved {
             switch d.mode {
-            case .pan: break
+            case .pan, .frameDraw: break
             case .orbit: model.endGesture("Orbit Camera")
-            case .move: model.endGesture("Move")
+            case .move:
+                model.reparent(model.selection, among: d.boards)
+                model.endGesture("Move")
             case .lift: model.endGesture("Lift")
             case .spin: model.endGesture("Rotate")
             case .annotation: model.endGesture("Move Art")
+            case .frameMove: model.endGesture("Move Frame")
+            case .frameResize: model.endGesture("Resize Frame")
             }
             return
         }
-        if d.mode == .annotation { return }
+        if [.annotation, .frameMove, .frameResize].contains(d.mode) { return }
         if let id = d.hitPart {
             if d.extend {
                 if model.selection.contains(id) { model.selection.remove(id) } else { model.selection.insert(id) }
@@ -591,6 +742,9 @@ final class ViewportView: NSView {
         } else {
             model.selection = []
             model.pickedFaces = []
+            // A click on a frame's empty area selects it, like Figma.
+            let q = scenePoint(d.start)
+            if let b = frameCache?.boards.last(where: { $0.rect.contains(q) }) { model.selectFrame(b.id) } else { model.selectedFrame = nil }
         }
     }
 
@@ -766,6 +920,7 @@ final class ViewportView: NSView {
                 model.pickedFaces = []
                 model.annotation = nil
                 model.pickedKeys = []
+                model.selectedFrame = nil
             }
         case 123: model.nudge(Vec3(-step, 0, 0))
         case 124: model.nudge(Vec3(step, 0, 0))

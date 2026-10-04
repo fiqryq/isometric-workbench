@@ -35,25 +35,41 @@ struct VideoExportSheet: View {
                     if settings.format.supportsAlpha {
                         Toggle("Transparent background", isOn: $settings.transparent)
                     }
+                } footer: {
+                    if settings.format.isVector {
+                        Text("Every distinct frame is saved as paths, so lower frame rates make smaller files.")
+                    }
                 }
                 Section("Range") {
-                    NumberField(label: "Start (s)", value: settings.start, step: 0.5, range: 0...model.scene.duration) { v in
-                        settings.start = min(v, settings.end - 1 / settings.fps)
+                    HStack {
+                        Text("Start")
+                        Spacer()
+                        NumberField(label: "Start", icon: "arrow.right.to.line", value: settings.start, step: 0.5, range: 0...model.scene.duration, suffix: "s") { v in
+                            settings.start = min(v, settings.end - 1 / settings.fps)
+                        }
+                        .frame(width: 110)
                     }
-                    NumberField(label: "End (s)", value: settings.end, step: 0.5, range: 0...model.scene.duration) { v in
-                        settings.end = max(v, settings.start + 1 / settings.fps)
+                    HStack {
+                        Text("End")
+                        Spacer()
+                        NumberField(label: "End", icon: "arrow.left.to.line", value: settings.end, step: 0.5, range: 0...model.scene.duration, suffix: "s") { v in
+                            settings.end = max(v, settings.start + 1 / settings.fps)
+                        }
+                        .frame(width: 110)
                     }
-                    LabeledContent("Output", value: summary)
+                    LabeledContent("Output") { Text(summary).monospacedDigit() }
                 }
                 if !store.isPro {
                     Section {
-                        HStack(alignment: .top, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: "seal").foregroundStyle(Color.accentColor)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Free exports run up to \(Int(Limits.freeVideoSeconds)) seconds at \(Limits.freeVideoHeight)p and carry a small mark.")
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Button("Unlock Workbench Pro…") { showPaywall = true }
                                     .buttonStyle(.link)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .font(.callout)
                     }
@@ -62,19 +78,20 @@ struct VideoExportSheet: View {
             }
             .formStyle(.grouped)
             Divider()
-            HStack {
+            HStack(spacing: 8) {
+                Spacer()
                 if job.isRunning {
                     Button("Stop", role: .cancel) { job.cancel() }
                 } else {
                     Button("Close", role: .cancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
                 }
-                Spacer()
                 Button("Export…") { export() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(job.isRunning || model.scene.parts.isEmpty)
             }
-            .padding(14)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
         .frame(width: 440)
         .onAppear {
@@ -124,13 +141,18 @@ struct VideoExportSheet: View {
                     Text("Rendering… \(Int(job.progress * 100))%")
                 }
             case .finished(let url):
-                HStack {
-                    Label("Exported \(url.lastPathComponent)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    Spacer()
+                HStack(spacing: 8) {
+                    Label("Exported \(url.lastPathComponent)", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 }
             case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             case .cancelled:
                 Label("Export stopped.", systemImage: "stop.circle").foregroundStyle(.secondary)
             case .idle:
@@ -184,15 +206,20 @@ struct PaywallView: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(features, id: \.1) { icon, text in
-                    Label(text, systemImage: icon)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: icon)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 22)
+                        Text(text).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if let message = store.message {
                 Text(message).font(.callout).foregroundStyle(.secondary)
             }
-            HStack {
+            HStack(spacing: 8) {
                 Button("Restore Purchase") { Task { await store.restore() } }
-                Spacer()
+                Spacer(minLength: 0)
                 Button("Not Now") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button {
@@ -229,9 +256,15 @@ struct SettingsView: View {
                 } else {
                     Text("Free exports are limited to \(Int(Limits.freeImageSide)) px images and \(Int(Limits.freeVideoSeconds)) s, \(Limits.freeVideoHeight)p video, with a small mark.")
                         .foregroundStyle(.secondary)
-                    Button("Unlock Workbench Pro…") { showPaywall = true }
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Button("Restore Purchase") { Task { await store.restore() } }
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    Button("Restore Purchase") { Task { await store.restore() } }
+                    if !store.isPro {
+                        Button("Unlock Workbench Pro…") { showPaywall = true }
+                    }
+                }
                 if let message = store.message { Text(message).font(.callout).foregroundStyle(.secondary) }
             }
         }

@@ -18,6 +18,8 @@ nonisolated struct FrameItem {
     var view: ViewTransform
     /// Tilt, roll and spin (camera included) behind `view`.
     var rotation: Vec3
+    /// The frame this part sits in, if any.
+    var board: Artboard.ID?
 
     /// Model point → screen.
     func screen(_ p: Vec3, _ angle: IsoAngle) -> Vec2 { angle.project(view.apply(p)) + offset }
@@ -43,7 +45,12 @@ nonisolated struct CalloutLayout {
 }
 
 nonisolated struct SheetLayout {
+    var id: Artboard.ID
     var rect: Box2
+    var name: String
+    var fill: RGB
+    var clip: Bool
+    var marks: Bool
     var margin: Double
     var grid: Double
     var fig: String
@@ -104,7 +111,8 @@ nonisolated struct Frame {
     var overlaysAbove: [Int: [Overlay]] = [:]
     var callouts: [CalloutLayout] = []
     var dimensions: [DimensionLayout] = []
-    var sheet: SheetLayout?
+    /// The page's frames, back to front.
+    var boards: [SheetLayout] = []
     /// False while some visible part is still building.
     var complete = true
     var contentBox = Box2.empty
@@ -113,6 +121,8 @@ nonisolated struct Frame {
     var worldView = ViewTransform.identity
 
     func item(for id: Part.ID) -> FrameItem? { items.first { $0.part.id == id } }
+
+    func board(_ id: Artboard.ID?) -> SheetLayout? { id.flatMap { id in boards.first { $0.id == id } } }
 
     var allOverlays: [Overlay] { overlaysBehind + overlaysAbove.keys.sorted().flatMap { overlaysAbove[$0]! } }
 }
@@ -165,7 +175,8 @@ nonisolated struct FrameComposer {
             let b = rr.isEmpty ? Box2(minX: 0, minY: 0, maxX: 0, maxY: 0) : Renderer.bounds(rr)
             items.append((i, FrameItem(
                 part: p, runs: rr, offset: off, opacity: opacity, depth: w.dot(angle.toViewer), box: b.offset(by: off),
-                view: ViewTransform(rotation: rot, pivot: pivot), rotation: rot)))
+                view: ViewTransform(rotation: rot, pivot: pivot), rotation: rot,
+                board: scene.frames.index(holding: p.id).map { scene.frames[$0].id })))
         }
         // Back to front; inlays ride directly above their host.
         items.sort { $0.1.depth != $1.1.depth ? $0.1.depth < $1.1.depth : $0.0 < $1.0 }
@@ -196,29 +207,32 @@ nonisolated struct FrameComposer {
             return layoutDimension(d, ordered[i], m, angle)
         }
 
-        if scene.sheet.visible {
+        for a in scene.frames {
+            // Hug the children at rest, so the frame holds still while they animate.
             var restBox = Box2.empty
-            for p in visible {
+            for p in visible where a.children.contains(p.id) {
                 guard meshes[p.id] != nil,
                       let rr = runs(p, Vec3(p.anim.base("tilt"), p.anim.base("roll"), p.anim.base("spin")), angle), !rr.isEmpty
                 else { continue }
                 restBox = restBox.union(Renderer.bounds(rr).offset(by: angle.project(Vec3(p.anim.base("x"), p.anim.base("y"), p.anim.base("z")))))
             }
-            if restBox.isEmpty { restBox = frame.contentBox.isEmpty ? Box2(minX: -100, minY: -100, maxX: 100, maxY: 100) : frame.contentBox }
-            let size = scene.sheet.size ?? Vec2(
-                max(1200, ((restBox.width + 560) / 40).rounded(.up) * 40),
-                max(800, ((restBox.height + 280) / 40).rounded(.up) * 40))
-            let minX = (restBox.midX - size.x / 2).rounded(), minY = (restBox.midY - size.y / 2).rounded()
-            frame.sheet = SheetLayout(
-                rect: Box2(minX: minX, minY: minY, maxX: minX + size.x, maxY: minY + size.y),
-                margin: scene.sheet.margin, grid: max(4, scene.sheet.grid),
-                fig: scene.sheet.fig, title: scene.sheet.title, year: scene.sheet.year)
+            if restBox.isEmpty { restBox = Box2(minX: -200, minY: -150, maxX: 200, maxY: 150) }
+            // A marked frame is a drawing sheet with room for its labels.
+            let size = a.size ?? (a.marks
+                ? Vec2(max(1200, ((restBox.width + 560) / 40).rounded(.up) * 40), max(800, ((restBox.height + 280) / 40).rounded(.up) * 40))
+                : Vec2((restBox.width + 80).rounded(.up), (restBox.height + 80).rounded(.up)))
+            let o = a.origin ?? Vec2((restBox.midX - size.x / 2).rounded(), (restBox.midY - size.y / 2).rounded())
+            frame.boards.append(SheetLayout(
+                id: a.id, rect: Box2(minX: o.x, minY: o.y, maxX: o.x + size.x, maxY: o.y + size.y), name: a.name,
+                fill: a.fill.map(RGB.init(hex:)) ?? scene.style.sheetFill, clip: a.clip, marks: a.marks,
+                margin: a.margin, grid: max(4, a.grid), fig: a.fig, title: a.title, year: a.year))
         }
 
-        frame.callouts = layoutCallouts(ordered, midX: frame.sheet?.rect.midX ?? frame.contentBox.midX)
+        frame.callouts = layoutCallouts(ordered, midX: frame.boards.first?.rect.midX ?? frame.contentBox.midX)
 
-        if let sheet = frame.sheet {
-            frame.bounds = sheet.rect
+        if !frame.boards.isEmpty {
+            // Exports cover the frames when there are any.
+            frame.bounds = frame.boards.reduce(Box2.empty) { $0.union($1.rect) }
         } else {
             var b = frame.callouts.reduce(frame.contentBox) { $0.union($1.box) }
             for g in frame.guidesBehind + frame.guidesAbove.values.flatMap({ $0 }) {

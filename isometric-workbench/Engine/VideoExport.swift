@@ -9,7 +9,7 @@ import IsoRender
 import UniformTypeIdentifiers
 
 nonisolated enum VideoFormat: String, CaseIterable, Identifiable, Sendable {
-    case h264, hevc, prores, gif, png
+    case h264, hevc, prores, gif, png, lottie, svg
 
     var id: String { rawValue }
 
@@ -20,6 +20,8 @@ nonisolated enum VideoFormat: String, CaseIterable, Identifiable, Sendable {
         case .prores: "MOV · ProRes 4444"
         case .gif: "Animated GIF"
         case .png: "PNG Sequence"
+        case .lottie: "Lottie JSON"
+        case .svg: "Animated SVG"
         }
     }
 
@@ -29,11 +31,16 @@ nonisolated enum VideoFormat: String, CaseIterable, Identifiable, Sendable {
         case .prores: .quickTimeMovie
         case .gif: .gif
         case .png: .folder
+        case .lottie: .json
+        case .svg: .svg
         }
     }
 
     /// Keeps the paper transparent.
-    var supportsAlpha: Bool { self == .prores || self == .png }
+    var supportsAlpha: Bool { self == .prores || self == .png || isVector }
+
+    /// Drawn as paths, one group per distinct frame, rather than as pixels.
+    var isVector: Bool { self == .lottie || self == .svg }
 
     var maxSide: Int {
         switch self {
@@ -62,6 +69,37 @@ nonisolated struct VideoPlan: Sendable {
     let height: Int
     let scale: Double
     let times: [Double]
+
+    /// The scene point at the canvas's top-left, with the box centred in the
+    /// (even-rounded) canvas.
+    var origin: Vec2 {
+        Vec2(box.minX - (Double(width) / scale - box.width) / 2, box.minY - (Double(height) / scale - box.height) / 2)
+    }
+
+    /// Each distinct frame with the frame numbers `[start, end)` it holds
+    /// for; consecutive equal frames merge. Checks for cancellation.
+    func spans<Content: Equatable>(
+        progress: (Double) -> Void, _ content: (Double) throws -> Content
+    ) throws -> [FrameSpan<Content>] {
+        var out: [FrameSpan<Content>] = []
+        for (i, t) in times.enumerated() {
+            try Task.checkCancellation()
+            let c = try content(t)
+            if let last = out.last, last.content == c {
+                out[out.count - 1].end = i + 1
+            } else {
+                out.append(FrameSpan(content: c, start: i, end: i + 1))
+            }
+            progress(Double(i + 1) / Double(times.count) * 0.95)
+        }
+        return out
+    }
+}
+
+nonisolated struct FrameSpan<Content: Equatable> {
+    var content: Content
+    var start: Int
+    var end: Int
 }
 
 nonisolated enum VideoExportError: LocalizedError {
@@ -76,7 +114,7 @@ nonisolated enum VideoExportError: LocalizedError {
 
 nonisolated enum VideoExporter {
     /// Frame times and a fixed box that holds the whole animation (the
-    /// sheet when it's shown).
+    /// frames when there are any).
     static func plan(_ scene: SceneFile, composer: FrameComposer, settings: VideoSettings) -> VideoPlan {
         let fps = max(1, settings.fps.rounded())
         let count = max(1, Int(((settings.end - settings.start) * fps).rounded()))
@@ -85,8 +123,8 @@ nonisolated enum VideoExporter {
         let stride = max(1, count / 48)
         for i in Swift.stride(from: 0, to: count, by: stride) + [count - 1] {
             let f = composer.compose(scene, at: times[i])
-            if let sheet = f.sheet {
-                box = sheet.rect
+            if !f.boards.isEmpty {
+                box = f.bounds
                 break
             }
             box = box.union(f.bounds)
@@ -117,9 +155,7 @@ nonisolated enum VideoExporter {
         ctx.saveGState()
         ctx.translateBy(x: 0, y: CGFloat(plan.height))
         ctx.scaleBy(x: plan.scale, y: -plan.scale)
-        // Centre the box in the (even-rounded) canvas.
-        let ox = (Double(plan.width) / plan.scale - plan.box.width) / 2, oy = (Double(plan.height) / plan.scale - plan.box.height) / 2
-        ctx.translateBy(x: ox - plan.box.minX, y: oy - plan.box.minY)
+        ctx.translateBy(x: -plan.origin.x, y: -plan.origin.y)
         ctx.setShouldSmoothFonts(false)
         FramePainter.paint(frame, in: ctx, background: false)
         if settings.watermark { FramePainter.paintWatermark(plan.box, style: frame.style, in: ctx) }
@@ -143,6 +179,12 @@ nonisolated enum VideoExporter {
                 try encodeGIF(scene, composer, plan, settings, url, progress)
             case .png:
                 try writePNGs(scene, composer, plan, settings, url, progress)
+            case .lottie:
+                try LottieWriter.document(scene, composer: composer, plan: plan, settings: settings, progress: progress)
+                    .write(to: url, atomically: true, encoding: .utf8)
+            case .svg:
+                try AnimatedSVGWriter.document(scene, composer: composer, plan: plan, settings: settings, progress: progress)
+                    .write(to: url, atomically: true, encoding: .utf8)
             }
         } catch {
             try? FileManager.default.removeItem(at: url)

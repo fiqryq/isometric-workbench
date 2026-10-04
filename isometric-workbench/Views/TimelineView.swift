@@ -53,6 +53,7 @@ final class TimelineContainer: NSView {
         ruler = TimelineRuler(model: model)
         tracks = TimelineTracks(model: model)
         super.init(frame: .zero)
+        clipsToBounds = true
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false

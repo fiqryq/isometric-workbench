@@ -17,35 +17,47 @@ nonisolated enum SVGWriter {
         if background {
             out += #"<rect x="\#(n(b.minX))" y="\#(n(b.minY))" width="\#(n(b.width))" height="\#(n(b.height))" fill="\#(style.bg)"/>"#
         }
-        if let sheet = frame.sheet { out += sheetSVG(sheet, style: style) }
-        for g in frame.guidesBehind { out += guideSVG(g, style: style) }
         var clip = 0
-        for o in frame.overlaysBehind { out += overlaySVG(o, style: style, clip: &clip) }
-        for (i, item) in frame.items.enumerated() {
-            out += itemSVG(item, style: style)
-            for g in frame.guidesAbove[i] ?? [] { out += guideSVG(g, style: style) }
-            for o in frame.overlaysAbove[i] ?? [] { out += overlaySVG(o, style: style, clip: &clip) }
-        }
-        for c in frame.callouts { out += calloutSVG(c, ink: style.ink) }
-        for d in frame.dimensions { out += dimensionSVG(d, style: style) }
-        if watermark {
-            let o = FramePainter.watermarkOrigin(b)
-            out += #"<g opacity="0.75">"# + text(FramePainter.watermarkText, x: o.x, y: o.y + Typeset.baseline(Typeset.sheetSize), size: Typeset.sheetSize, fill: style.labelInk.hex) + "</g>"
-        }
+        out += content(frame, clip: &clip)
+        if watermark { out += watermarkSVG(b, style: style) }
         return out + "</svg>\n"
     }
 
-    static func overlaySVG(_ o: Overlay, style: Style, clip: inout Int) -> String {
+    /// Everything in the frame, in paint order. `named` gives parts and flat
+    /// art `id`s from their names; hatch clip ids count up from `clip`;
+    /// `merged` draws each run's faces as one outline (see `PathMerge`).
+    static func content(_ frame: Frame, clip: inout Int, named: Bool = true, merged: Bool = false) -> String {
+        let style = frame.style
+        var out = ""
+        for b in frame.boards { out += sheetSVG(b, style: style) }
+        for g in frame.guidesBehind { out += guideSVG(g, style: style) }
+        for o in frame.overlaysBehind { out += overlaySVG(o, style: style, clip: &clip, named: named) }
+        for (i, item) in frame.items.enumerated() {
+            out += itemSVG(item, style: style, named: named, merged: merged)
+            for g in frame.guidesAbove[i] ?? [] { out += guideSVG(g, style: style) }
+            for o in frame.overlaysAbove[i] ?? [] { out += overlaySVG(o, style: style, clip: &clip, named: named) }
+        }
+        for c in frame.callouts { out += calloutSVG(c, ink: style.ink) }
+        for d in frame.dimensions { out += dimensionSVG(d, style: style) }
+        return out
+    }
+
+    static func watermarkSVG(_ bounds: Box2, style: Style) -> String {
+        let o = FramePainter.watermarkOrigin(bounds)
+        return #"<g opacity="0.75">"# + text(FramePainter.watermarkText, x: o.x, y: o.y + Typeset.baseline(Typeset.sheetSize), size: Typeset.sheetSize, fill: style.labelInk.hex) + "</g>"
+    }
+
+    static func overlaySVG(_ o: Overlay, style: Style, clip: inout Int, named: Bool = true) -> String {
         switch o {
-        case .shape(let s): shapeSVG(s, style: style, clip: &clip)
-        case .decal(let d): decalSVG(d, style: style)
+        case .shape(let s): shapeSVG(s, style: style, clip: &clip, named: named)
+        case .decal(let d): decalSVG(d, style: style, named: named)
         }
     }
 
-    static func shapeSVG(_ s: ShapeLayout, style: Style, clip: inout Int) -> String {
+    static func shapeSVG(_ s: ShapeLayout, style: Style, clip: inout Int, named: Bool = true) -> String {
         let d = s.polys.map { poly in "M" + poly.map { "\(n($0.x)) \(n($0.y))" }.joined(separator: "L") + "Z" }.joined()
         let ink = s.shape.stroke ?? style.ink
-        var out = #"<g id="\#(esc(s.shape.name))"\#(s.opacity < 0.999 ? #" opacity="\#(n(s.opacity))""# : "")>"#
+        var out = #"<g\#(id(s.shape.name, named))\#(s.opacity < 0.999 ? #" opacity="\#(n(s.opacity))""# : "")>"#
         out += #"<path d="\#(d)" fill="\#(s.shape.fill ?? "none")" fill-rule="evenodd"/>"#
         if s.shape.hatch {
             clip += 1
@@ -57,11 +69,11 @@ nonisolated enum SVGWriter {
         return out + "</g>"
     }
 
-    static func decalSVG(_ d: DecalLayout, style: Style) -> String {
+    static func decalSVG(_ d: DecalLayout, style: Style, named: Bool = true) -> String {
         let decal = d.decal, t = d.transform
         let color = decal.color ?? style.ink
         let m = [t.a, t.b, t.c, t.d, t.tx, t.ty].map { jsNumberString(($0 * 1000).rounded() / 1000) }.joined(separator: " ")
-        var out = #"<g id="\#(esc(decal.name))" transform="matrix(\#(m))"\#(d.opacity < 0.999 ? #" opacity="\#(n(d.opacity))""# : "")>"#
+        var out = #"<g\#(id(decal.name, named)) transform="matrix(\#(m))"\#(d.opacity < 0.999 ? #" opacity="\#(n(d.opacity))""# : "")>"#
         let size = DecalArt.size(decal)
         switch decal.kind {
         case .text:
@@ -92,25 +104,27 @@ nonisolated enum SVGWriter {
         return out + "</g>"
     }
 
-    static func itemSVG(_ item: FrameItem, style: Style) -> String {
+    static func itemSVG(_ item: FrameItem, style: Style, named: Bool = true, merged: Bool = false) -> String {
         let fill = style.fill(for: item.part), ink = style.ink(for: item.part)
         let weight = style.weight(for: item.part), gap = style.gap(for: item.part)
         var body = ""
         for run in item.runs {
-            let d = run.polys.map { poly in "M" + poly.map { "\(n($0.x)) \(n($0.y))" }.joined(separator: "L") + "Z" }.joined()
+            let d = merged
+                ? pathData(PathMerge.outline(PathMerge.contours(PathMerge.polygons(run.polys))))
+                : run.polys.map { poly in "M" + poly.map { "\(n($0.x)) \(n($0.y))" }.joined(separator: "L") + "Z" }.joined()
             let f = fill.mix(ink, run.shade).css
-            body += #"<path d="\#(d)" fill="\#(f)" stroke="\#(f)" stroke-width="0.6" stroke-linejoin="round"/>"#
+            body += #"<path d="\#(d)" fill="\#(f)"\#(merged ? #" fill-rule="evenodd""# : "") stroke="\#(f)" stroke-width="0.6" stroke-linejoin="round"/>"#
             if run.kind == .cut {
                 let h = run.polys.flatMap { Hatch.segments($0, gap: gap) }.map(seg).joined()
                 if !h.isEmpty { body += #"<path d="\#(h)" fill="none" stroke="\#(ink.hex)" stroke-width="0.8"/>"# }
             }
             if !run.edges.isEmpty {
-                let e = run.edges.map(seg).joined()
+                let e = merged ? pathData(PathMerge.chain(PathMerge.contours(PathMerge.lines(run.edges)))) : run.edges.map(seg).joined()
                 body += #"<path d="\#(e)" fill="none" stroke="\#(ink.hex)" stroke-width="\#(n(weight))" stroke-linecap="round" stroke-linejoin="round"/>"#
             }
         }
         let opacity = item.opacity < 0.999 ? #" opacity="\#(n(item.opacity))""# : ""
-        return #"<g id="\#(esc(item.part.name))" transform="translate(\#(n(item.offset.x)) \#(n(item.offset.y)))"\#(opacity)>\#(body)</g>"#
+        return #"<g\#(id(item.part.name, named)) transform="translate(\#(n(item.offset.x)) \#(n(item.offset.y)))"\#(opacity)>\#(body)</g>"#
     }
 
     static func guideSVG(_ g: GuideLayout, style: Style) -> String {
@@ -132,7 +146,8 @@ nonisolated enum SVGWriter {
 
     static func sheetSVG(_ s: SheetLayout, style: Style) -> String {
         let r = s.rect, m = s.margin
-        var out = #"<rect x="\#(n(r.minX))" y="\#(n(r.minY))" width="\#(n(r.width))" height="\#(n(r.height))" fill="\#(style.sheetFill.hex)"/>"#
+        var out = #"<rect x="\#(n(r.minX))" y="\#(n(r.minY))" width="\#(n(r.width))" height="\#(n(r.height))" fill="\#(s.fill.hex)"/>"#
+        guard s.marks else { return out }
         var d = ""
         var x = r.minX + m
         while x <= r.maxX - m + 1e-6 {
@@ -163,9 +178,16 @@ nonisolated enum SVGWriter {
         return #"<path d="M\#(n(pts[0].x)) \#(n(pts[0].y))L\#(n(b.x)) \#(n(b.y))L\#(n(pts[1].x)) \#(n(pts[1].y))" stroke-linejoin="round"/>"#
     }
 
+    /// Straight contours (from `PathMerge`) as path data.
+    private static func pathData(_ cs: [PathMerge.Contour]) -> String {
+        cs.map { c in "M" + c.v.map { "\(n($0.p.x)) \(n($0.p.y))" }.joined(separator: "L") + (c.closed ? "Z" : "") }.joined()
+    }
+
     private static func seg(_ e: (Vec2, Vec2)) -> String { "M\(n(e.0.x)) \(n(e.0.y))L\(n(e.1.x)) \(n(e.1.y))" }
 
     private static func n(_ v: Double) -> String { jsNumberString(round1(v)) }
+
+    private static func id(_ name: String, _ named: Bool) -> String { named ? #" id="\#(esc(name))""# : "" }
 
     private static func esc(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")

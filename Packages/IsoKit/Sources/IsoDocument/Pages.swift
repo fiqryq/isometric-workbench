@@ -1,26 +1,26 @@
 import Foundation
 
 /// One page of a document. Pages share the parts (geometry, style, callouts) but
-/// each has its own camera, timing, sheet, and per-part transform, keys and visibility.
+/// each has its own camera, timing, frames, and per-part transform, keys and visibility.
 public struct Page: Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String
     public var duration: Double
     public var fps: Double
     public var camera: Animatable
-    public var sheet: Sheet
+    public var frames: [Artboard]
     /// Part id → transform and keys on this page.
     public var anims: [Part.ID: Animatable]
     public var hidden: Set<Part.ID>
 
     public init(id: String = makeID(), name: String, duration: Double = 4, fps: Double = 24, camera: Animatable = Animatable(base: ["spin": 0]),
-                sheet: Sheet = Sheet(), anims: [Part.ID: Animatable] = [:], hidden: Set<Part.ID> = []) {
+                frames: [Artboard] = [], anims: [Part.ID: Animatable] = [:], hidden: Set<Part.ID> = []) {
         self.id = id
         self.name = name
         self.duration = duration
         self.fps = fps
         self.camera = camera
-        self.sheet = sheet
+        self.frames = frames
         self.anims = anims
         self.hidden = hidden
     }
@@ -31,7 +31,7 @@ public struct Page: Sendable, Hashable, Identifiable {
         duration = max(0.1, json["duration"]?.jsNumber ?? 4)
         fps = max(1, json["fps"]?.jsNumber ?? 24)
         camera = Animatable(json: json["camera"])
-        sheet = Sheet(json: json["sheet"])
+        frames = json["frames"]?.array.map { $0.map(Artboard.init(json:)) } ?? Artboard.legacySheet(json["sheet"]).map { [$0] } ?? []
         var anims: [Part.ID: Animatable] = [:]
         for (id, a) in json["anims"]?.object ?? [:] { anims[id] = Animatable(json: a) }
         self.anims = anims
@@ -43,7 +43,7 @@ public struct Page: Sendable, Hashable, Identifiable {
         for (id, a) in self.anims { anims[id] = ["base": a.baseJSON, "keys": a.keysJSON] }
         return [
             "id": .string(id), "name": .string(name), "duration": .number(duration), "fps": .number(fps),
-            "camera": ["base": camera.baseJSON, "keys": camera.keysJSON], "sheet": sheet.json,
+            "camera": ["base": camera.baseJSON, "keys": camera.keysJSON], "frames": .array(frames.map(\.json)),
             "anims": .object(anims), "hidden": .array(hidden.sorted().map(JSONValue.string)),
         ]
     }
@@ -61,7 +61,7 @@ extension SceneFile {
 
     /// The editable fields (duration, camera, part transforms…) as a page.
     func currentPageState(id: String, name: String) -> Page {
-        Page(id: id, name: name, duration: duration, fps: fps, camera: camera, sheet: sheet,
+        Page(id: id, name: name, duration: duration, fps: fps, camera: camera, frames: frames,
              anims: Dictionary(uniqueKeysWithValues: parts.map { ($0.id, $0.anim) }),
              hidden: Set(parts.filter(\.hidden).map(\.id)))
     }
@@ -73,7 +73,7 @@ extension SceneFile {
         pages[i] = currentPageState(id: p.id, name: p.name)
     }
 
-    /// Makes `id` the active page, loading its camera, timing, sheet and part transforms.
+    /// Makes `id` the active page, loading its camera, timing, frames and part transforms.
     /// Parts the page doesn't know about keep their current transform.
     public mutating func activatePage(_ id: Page.ID) {
         guard id != activePage, let page = pages.first(where: { $0.id == id }) else { return }
@@ -81,7 +81,7 @@ extension SceneFile {
         duration = page.duration
         fps = page.fps
         camera = page.camera
-        sheet = page.sheet
+        frames = page.frames
         for i in parts.indices {
             if let a = page.anims[parts[i].id] {
                 parts[i].anim = a
