@@ -51,8 +51,8 @@ nonisolated enum LottieWriter {
         let spans = try plan.spans(progress: progress) { t in
             var frame = composer.compose(scene, at: t)
             style = frame.style
-            let sheet = frame.sheet.map { pieces([.marks(sheetMarks($0, style: frame.style))], plan, &assets) } ?? []
-            frame.sheet = nil
+            let sheet = frame.boards.isEmpty ? [] : pieces(frame.boards.map { .marks(sheetMarks($0, style: frame.style)) }, plan, &assets)
+            frame.boards = []
             return Content(sheet: sheet, body: pieces(chunks(frame), plan, &assets))
         }
 
@@ -309,6 +309,8 @@ nonisolated enum LottieWriter {
 
     static func sheetMarks(_ s: SheetLayout, style: Style) -> [Mark] {
         let r = s.rect, m = s.margin
+        let paper = Mark(path: CGPath(rect: r.cgRect, transform: nil), fill: s.fill)
+        guard s.marks else { return [paper] }
         let grid = CGMutablePath()
         var x = r.minX + m
         while x <= r.maxX - m + 1e-6 {
@@ -328,7 +330,7 @@ nonisolated enum LottieWriter {
             labels.addPath(textPath(label.text, size: Typeset.sheetSize, transform: t))
         }
         return [
-            Mark(path: CGPath(rect: r.cgRect, transform: nil), fill: style.sheetFill),
+            paper,
             Mark(path: grid, stroke: RGB(hex: style.ink), width: 0.5, roundCaps: false, opacity: 0.07),
             Mark(path: labels, fill: style.labelInk),
         ]

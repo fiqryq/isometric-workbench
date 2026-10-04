@@ -11,7 +11,7 @@ nonisolated enum Thumbnailer {
     static func render(_ scene: SceneFile, size: CGSize) -> CGImage? {
         guard !scene.isEmpty else { return nil }
         var scene = scene
-        scene.sheet.visible = false
+        scene.frames = []
         let frame = OfflineGeometry().composer.compose(scene, at: 0)
         let b = frame.bounds
         guard b.width > 0, b.height > 0 else { return nil }

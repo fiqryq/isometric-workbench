@@ -6,13 +6,14 @@ import IsoRender
 import UniformTypeIdentifiers
 
 enum Tool: String, CaseIterable, Identifiable {
-    case select, rectangle, ellipse, polygon, pen, rings
+    case select, frame, rectangle, ellipse, polygon, pen, rings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .select: "Select"
+        case .frame: "Frame"
         case .rectangle: "Rectangle"
         case .ellipse: "Ellipse"
         case .polygon: "Polygon"
@@ -24,6 +25,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .select: "cursorarrow"
+        case .frame: "number"
         case .rectangle: "rectangle"
         case .ellipse: "circle"
         case .polygon: "hexagon"
@@ -35,6 +37,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var key: Character {
         switch self {
         case .select: "v"
+        case .frame: "a"
         case .rectangle: "r"
         case .ellipse: "o"
         case .polygon: "g"
@@ -136,6 +139,7 @@ extension SceneModel {
         }
         switch tool {
         case .select: status = "Ready"
+        case .frame: status = "Drag to draw a frame; parts inside it join it. Click for a 400 × 300 frame."
         case .rectangle, .ellipse, .polygon:
             status = "Drag on a face to sketch on it, or on empty canvas to sketch on the \(drawPlane.rawValue) plane. ⇧ keeps it even."
         case .pen: status = "Click to place points; click the first point, double-click or press Return to close. Esc cancels."
