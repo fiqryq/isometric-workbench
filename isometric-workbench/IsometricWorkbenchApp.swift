@@ -7,6 +7,11 @@ import UniformTypeIdentifiers
 
 @main
 struct IsometricWorkbenchApp: App {
+    init() {
+        // Launch into a new untitled document instead of the Open panel.
+        UserDefaults.standard.register(defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
+    }
+
     var body: some Scene {
         DocumentGroup(newDocument: { SceneDocument() }) { file in
             DocumentView(document: file.document)
