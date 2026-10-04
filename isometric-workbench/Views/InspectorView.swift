@@ -16,13 +16,19 @@ struct InspectorView: View {
             if model.tool.draws && model.sketch == nil {
                 ToolOptionsSection(model: model)
             }
-            if model.annotation == nil, model.selectedBoard == nil, !model.selection.isEmpty {
+            if model.annotation == nil, model.selectedFrames.isEmpty, !model.selection.isEmpty {
                 AlignmentBar(model: model)
             }
             if let a = model.annotation {
                 AnnotationInspector(model: model, ref: a)
             } else if let board = model.selectedBoard {
                 FrameInspector(model: model, board: board)
+            } else if !model.selectedFrames.isEmpty {
+                InspectorSection(selectionSummary) {
+                    EmptyView()
+                } accessory: {
+                    InspectorIconButton("trash", help: "Delete", role: .destructive, action: model.deleteSelection)
+                }
             } else if let i = model.selectedIndex {
                 PartInspector(model: model, part: model.scene.parts[i])
             } else if model.selection.count > 1 {
@@ -37,6 +43,13 @@ struct InspectorView: View {
                 SceneInspector(model: model)
             }
         }
+        .environment(\.liveEdit, LiveEdit(begin: model.beginLiveEdit, end: model.endLiveEdit))
+    }
+
+    private var selectionSummary: String {
+        let f = model.selectedFrames.count, p = model.selection.count
+        let frames = "\(f) Frame\(f == 1 ? "" : "s")"
+        return p == 0 ? frames : "\(frames), \(p) Part\(p == 1 ? "" : "s")"
     }
 }
 
@@ -70,12 +83,10 @@ struct SceneInspector: View {
     private var scene: SceneFile { model.scene }
 
     var body: some View {
-        InspectorSection("Drawing") {
-            CommitField(title: "Name", text: scene.name) { v in model.edit("Rename Drawing") { $0.name = v } }
+        InspectorSection("Projection") {
             IconSegmented(selection: Binding(get: { scene.angle < 28 ? 26.565 : 30 }, set: { v in
                 model.edit("Change Projection") { $0.angle = v }
             }), [.text("Isometric 30°", 30.0), .text("Pixel 2:1", 26.565)])
-            .help("Projection")
         }
         InspectorSection("Style") {
             PopupField("Palette", icon: "paintpalette", selection: Binding(get: { scene.style.preset ?? "" }, set: { id in
@@ -92,36 +103,12 @@ struct SceneInspector: View {
             HexColorPicker(title: "Ink", hex: scene.style.ink) { v in model.edit("Change Ink") { $0.style.ink = v; $0.style.preset = nil } }
             HexColorPicker(title: "Fill", hex: scene.style.fill) { v in model.edit("Change Fill") { $0.style.fill = v; $0.style.preset = nil } }
             HexColorPicker(title: "Paper", hex: scene.style.bg) { v in model.edit("Change Paper") { $0.style.bg = v } }
-            FieldPair {
-                NumberField(label: "Line weight", icon: "lineweight", value: scene.style.weight, step: 0.25, range: 0.25...8) { v in
-                    model.edit("Change Line Weight") { $0.style.weight = v }
-                }
-            } _: {
-                NumberField(label: "Hatch gap", icon: "line.diagonal", value: scene.style.gap, step: 1, range: 2...40) { v in
-                    model.edit("Change Hatch Gap") { $0.style.gap = v }
-                }
+            SliderField(label: "Line weight", icon: "lineweight", value: scene.style.weight, range: 0.25...8, step: 0.05) { v in
+                model.edit("Change Line Weight") { $0.style.weight = v }
             }
-        }
-        InspectorSection("Frames") {
-            if scene.frames.isEmpty {
-                InspectorNote("Press A to draw a frame, or ⌥⌘G to frame the parts.")
+            SliderField(label: "Hatch gap", icon: "line.diagonal", value: scene.style.gap, range: 2...40) { v in
+                model.edit("Change Hatch Gap") { $0.style.gap = v }
             }
-            ForEach(scene.frames) { f in
-                Button { model.selectFrame(f.id) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "number").foregroundStyle(.secondary)
-                        Text(f.name).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text("\(f.children.count)").monospacedDigit().foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                    }
-                    .font(InspectorMetrics.font)
-                }
-                .buttonStyle(FieldButtonStyle())
-                .help("Select \(f.name)")
-            }
-        } accessory: {
-            SectionAddButton(help: "Frame the parts (⌥⌘G)", action: model.frameSelection)
         }
         InspectorSection("Animation") {
             FieldPair {
@@ -133,20 +120,19 @@ struct SceneInspector: View {
                     model.edit("Change Frame Rate") { $0.fps = v.rounded() }
                 }
             }
-            FieldPair {
-                NumberField(label: "Camera spin", icon: "rotate.3d", value: scene.camera.value("spin", at: model.frameTime), step: 15, suffix: "°") { v in
-                    let t = model.frameTime, auto = model.autoKey
-                    model.edit("Orbit Camera") { $0.camera.set("spin", v, at: t, autoKey: auto) }
-                }
-            } _: {
-                Color.clear
+            SliderField(label: "Camera spin", icon: "rotate.3d", value: wrapped(scene.camera.value("spin", at: model.frameTime)),
+                        range: -180...180, suffix: "°") { v in
+                let t = model.frameTime, auto = model.autoKey
+                model.edit("Orbit Camera") { $0.camera.set("spin", v, at: t, autoKey: auto) }
             }
         }
-        InspectorSection {
-            InspectorNote("Click a part to edit it. R, O, G, P draw; L picks rings.")
-                .help("Drag to move, ⇧-drag to lift, ⌥-drag to spin. ⌘-click a face to extrude it. Drag the background to pan, ⌥-drag it to orbit.")
-        }
     }
+}
+
+/// An angle folded into -180…180 for an angle slider.
+func wrapped(_ degrees: Double) -> Double {
+    let d = (degrees + 180).truncatingRemainder(dividingBy: 360)
+    return (d < 0 ? d + 360 : d) - 180
 }
 
 // MARK: - Part
@@ -165,20 +151,23 @@ struct PartInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         } accessory: {
+            addMenu
             InspectorIconToggle(on: "eye.slash", off: "eye", help: part.hidden ? "Show" : "Hide",
                                 isOn: Binding(get: { part.hidden }, set: { v in model.updatePart(part.id, v ? "Hide" : "Show") { $0.hidden = v } }))
             InspectorIconToggle(on: "lock.fill", off: "lock.open", help: part.locked ? "Unlock" : "Lock",
                                 isOn: Binding(get: { part.locked }, set: { v in model.updatePart(part.id, v ? "Lock" : "Unlock") { $0.locked = v } }))
         }
         InspectorSection("Transform") {
-            FieldPair { transformRow("X", "x") } _: { transformRow("Y", "y") }
-            FieldPair { transformRow("Z", "z") } _: {
-                transformRow("Opacity", "opacity", icon: "circle.lefthalf.filled", suffix: "%", step: 10, range: 0...100)
+            FieldPair { transformField("X", "x") } _: { transformField("Y", "y") }
+            FieldPair { transformField("Z", "z") } _: {
+                transformSlider("Opacity", "opacity", icon: "circle.lefthalf.filled", range: 0...100, suffix: "%")
             }
-            FieldPair { transformRow("Spin", "spin", icon: "rotate.right", suffix: "°", step: 15) } _: {
-                transformRow("Tilt", "tilt", suffix: "°", step: 15)
+            transformSlider("Spin", "spin", icon: "rotate.right", range: -180...180, suffix: "°")
+            FieldPair {
+                transformSlider("Tilt", "tilt", range: -180...180, suffix: "°")
+            } _: {
+                transformSlider("Roll", "roll", range: -180...180, suffix: "°")
             }
-            FieldPair { transformRow("Roll", "roll", suffix: "°", step: 15) } _: { Color.clear }
         }
         InspectorSection("Style") {
             HexColorPicker(title: "Fill", hex: part.style.fill ?? model.scene.style.fill, onCommit: { v in
@@ -186,42 +175,67 @@ struct PartInspector: View {
             }, onReset: part.style.fill == nil ? nil : {
                 model.updatePart(part.id, "Reset Fill") { $0.style.fill = nil }
             })
-            FieldPair {
-                NumberField(label: "Line weight", icon: "lineweight", value: part.style.weight ?? model.scene.style.weight, step: 0.25, range: 0.25...8) { v in
-                    model.updatePart(part.id, "Change Line Weight") { $0.style.weight = v }
-                }
-            } _: {
-                NumberField(label: "Smooth", value: part.smooth, step: 5, range: 0...90, suffix: "°") { v in
-                    model.updatePart(part.id, "Change Smoothing") { $0.smooth = v }
-                }
+            SliderField(label: "Line weight", icon: "lineweight", value: part.style.weight ?? model.scene.style.weight, range: 0.25...8, step: 0.05) { v in
+                model.updatePart(part.id, "Change Line Weight") { $0.style.weight = v }
             }
-            .help("Line weight and the angle below which edges are smoothed away")
+            SliderField(label: "Smooth", icon: "wand.and.rays", value: part.smooth, range: 0...90, suffix: "°") { v in
+                model.updatePart(part.id, "Change Smoothing") { $0.smooth = v }
+            }
+            .help("Edges between faces flatter than this are hidden")
         }
         if model.tool == .rings || model.pickedRings.contains(where: { $0.partID == part.id })
             || model.pickedSegments.contains(where: { $0.partID == part.id }) {
             RingsSection(model: model, part: part)
         }
         if !model.pickedFaces.filter({ $0.partID == part.id }).isEmpty { facesSection }
-        dimensions
-        callouts
+        if model.scene.dimensions.contains(where: { $0.part == part.id }) { dimensions }
+        if !part.callouts.isEmpty { callouts }
         StepsSection(model: model, part: part)
     }
 
-    private func transformRow(_ label: String, _ prop: String, icon: String? = nil, suffix: String? = nil, step: Double = 1,
-                              range: ClosedRange<Double> = -100_000...100_000) -> some View {
+    /// Callouts and dimensions are added from here, so empty sections stay out of the way.
+    private var addMenu: some View {
+        Menu {
+            Button("Callout") { model.updatePart(part.id, "Add Callout") { $0.callouts.append(Callout(text: $0.name)) } }
+            Button("Dimensions") { model.addDimensions() }
+                .disabled(model.scene.dimensions.contains { $0.part == part.id })
+        } label: {
+            Image(systemName: "plus")
+        }
+        .menuStyle(.button)
+        .buttonStyle(InspectorIconButtonStyle())
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Add a callout or dimensions")
+    }
+
+    private func keyButton(_ prop: String) -> KeyButton {
         let t = model.frameTime
         let keyed = part.anim.keys[prop]?.contains { abs($0.t - t) < 1e-3 } ?? false
-        let key = KeyButton(animated: part.anim.isAnimated(prop), keyed: keyed) {
+        return KeyButton(animated: part.anim.isAnimated(prop), keyed: keyed) {
             model.updatePart(part.id, keyed ? "Remove Key" : "Add Key") { p in
                 if keyed { p.anim.removeKey(prop, t: t) } else { p.anim.setKey(prop, t: t, v: p.anim.value(prop, at: t)) }
             }
         }
-        return NumberField(label: label, icon: icon, value: model.value(prop, of: part), step: step, range: range, suffix: suffix, key: key) { v in
+    }
+
+    private func transformField(_ label: String, _ prop: String) -> some View {
+        NumberField(label: label, value: model.value(prop, of: part), key: keyButton(prop)) { v in
             model.setProperty(prop, v, for: [part.id])
         }
-        .contextMenu {
-            if part.anim.isAnimated(prop) { Button("Remove Animation") { model.clearKeys(of: part.id, prop: prop) } }
+        .contextMenu { removeAnimation(prop) }
+    }
+
+    private func transformSlider(_ label: String, _ prop: String, icon: String? = nil, range: ClosedRange<Double>, suffix: String) -> some View {
+        let v = model.value(prop, of: part)
+        return SliderField(label: label, icon: icon, value: suffix == "°" ? wrapped(v) : v, range: range, suffix: suffix, key: keyButton(prop)) { v in
+            model.setProperty(prop, v, for: [part.id])
         }
+        .contextMenu { removeAnimation(prop) }
+    }
+
+    @ViewBuilder private func removeAnimation(_ prop: String) -> some View {
+        if part.anim.isAnimated(prop) { Button("Remove Animation") { model.clearKeys(of: part.id, prop: prop) } }
     }
 
     private var facesSection: some View {
@@ -258,12 +272,7 @@ struct PartInspector: View {
                 }
                 .buttonStyle(FieldButtonStyle())
             }
-        } accessory: {
-            if dims.isEmpty {
-                SectionAddButton(help: "Add dimensions", action: model.addDimensions)
-            }
         }
-        .dimmed(dims.isEmpty)
     }
 
     private var callouts: some View {
@@ -294,7 +303,6 @@ struct PartInspector: View {
                 model.updatePart(part.id, "Add Callout") { $0.callouts.append(Callout(text: $0.name)) }
             }
         }
-        .dimmed(part.callouts.isEmpty)
     }
 }
 

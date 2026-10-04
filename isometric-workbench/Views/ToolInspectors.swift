@@ -19,12 +19,8 @@ struct ToolOptionsSection: View {
             IconSegmented(selection: $model.drawPlane, planeSegments)
                 .help("The plane shapes are drawn on when you start on an empty canvas")
             if model.tool == .polygon {
-                FieldPair {
-                    NumberField(label: "Sides", value: Double(model.polygonSides), step: 1, range: 3...24) { v in
-                        model.polygonSides = Int(v.rounded())
-                    }
-                } _: {
-                    Color.clear
+                SliderField(label: "Sides", icon: "hexagon", value: Double(model.polygonSides), range: 3...24) { v in
+                    model.polygonSides = Int(v.rounded())
                 }
             }
             InspectorNote(model.tool == .pen ? "Click to add points · Return closes" : "Drag on a face or the canvas · ⇧ keeps it even")
@@ -100,23 +96,18 @@ struct RingsSection: View {
             }
             if !rings.isEmpty {
                 chips(rings.map { r in "Ring \(r.knot + 1)" + (infos.count > 1 ? " · \(loopName(r.loopID, infos))" : "") })
-                FieldPair {
-                    NumberField(label: "Scale", icon: "arrow.up.left.and.arrow.down.right", value: model.ringScale(rings[0]), step: 5, range: 1...500,
-                                suffix: "%") { model.scalePickedRings($0) }
-                } _: {
-                    if let info = infos.first(where: { $0.loopID == rings[0].loopID }) {
-                        NumberField(label: "Slide", value: part.ops[info.opIndex].num("slide", 0), step: 5, range: -100...100) { v in
-                            model.setStepField(part.id, step: info.opIndex, key: "slide", value: .number(v))
-                        }
-                    } else {
-                        Color.clear
+                SliderField(label: "Scale", icon: "arrow.up.left.and.arrow.down.right", value: model.ringScale(rings[0]), range: 1...300,
+                            suffix: "%") { model.scalePickedRings($0) }
+                if let info = infos.first(where: { $0.loopID == rings[0].loopID }) {
+                    SliderField(label: "Slide", icon: "arrow.left.and.right", value: part.ops[info.opIndex].num("slide", 0), range: -100...100) { v in
+                        model.setStepField(part.id, step: info.opIndex, key: "slide", value: .number(v))
                     }
                 }
                 if rings.count >= 2 {
                     FieldPair {
-                        NumberField(label: "From", value: taperFrom, step: 5, range: 1...500, suffix: "%") { taperFrom = $0 }
+                        SliderField(label: "From", value: taperFrom, range: 1...300, suffix: "%") { taperFrom = $0 }
                     } _: {
-                        NumberField(label: "To", value: taperTo, step: 5, range: 1...500, suffix: "%") { taperTo = $0 }
+                        SliderField(label: "To", value: taperTo, range: 1...300, suffix: "%") { taperTo = $0 }
                     }
                     WideButton("Taper Across Picked Rings") { model.taperPickedRings(from: taperFrom, to: taperTo) }
                 }
@@ -199,14 +190,11 @@ struct ShapeInspector: View {
         InspectorSection("Shape") {
             CommitField(title: "Name", text: shape.name) { v in model.updateShape(shape.id, "Rename") { $0.name = v } }
             ValueField(label: "Plane", value: "\(IsoPlane(axis: shape.axis).rawValue.capitalized) at \(jsNumberString(shape.at))")
-            FieldPair {
-                InspectorRow {
-                    Toggle("Hatched", isOn: Binding(get: { shape.hatch }, set: { v in model.updateShape(shape.id) { $0.hatch = v } }))
-                }
-            } _: {
-                NumberField(label: "Opacity", icon: "circle.lefthalf.filled", value: shape.opacity * 100, step: 10, range: 0...100, suffix: "%") { v in
-                    model.updateShape(shape.id) { $0.opacity = v / 100 }
-                }
+            SliderField(label: "Opacity", icon: "circle.lefthalf.filled", value: shape.opacity * 100, range: 0...100, suffix: "%") { v in
+                model.updateShape(shape.id) { $0.opacity = v / 100 }
+            }
+            InspectorRow {
+                Toggle("Hatched", isOn: Binding(get: { shape.hatch }, set: { v in model.updateShape(shape.id) { $0.hatch = v } }))
             }
         } accessory: {
             InspectorIconButton("trash", help: "Delete Shape", role: .destructive) { model.deleteAnnotation(.shape(shape.id)) }
@@ -246,15 +234,12 @@ struct DecalInspector: View {
             if decal.kind == .text {
                 CommitField(title: "Text", text: decal.content) { v in model.updateDecal(decal.id, "Edit Text") { $0.content = v } }
             }
-            FieldPair {
-                NumberField(label: decal.kind == .text ? "Font size" : "Width", icon: decal.kind == .text ? "textformat.size" : "arrow.left.and.right",
-                            value: decal.size, step: decal.kind == .text ? 1 : 5, range: 1...5000) { v in
-                    model.updateDecal(decal.id, "Resize Decal") { $0.size = v }
-                }
-            } _: {
-                NumberField(label: "Opacity", icon: "circle.lefthalf.filled", value: decal.opacity * 100, step: 10, range: 0...100, suffix: "%") { v in
-                    model.updateDecal(decal.id) { $0.opacity = v / 100 }
-                }
+            SliderField(label: decal.kind == .text ? "Font size" : "Width", icon: decal.kind == .text ? "textformat.size" : "arrow.left.and.right",
+                        value: decal.size, range: decal.kind == .text ? 4...200 : 4...1000) { v in
+                model.updateDecal(decal.id, "Resize Decal") { $0.size = v }
+            }
+            SliderField(label: "Opacity", icon: "circle.lefthalf.filled", value: decal.opacity * 100, range: 0...100, suffix: "%") { v in
+                model.updateDecal(decal.id) { $0.opacity = v / 100 }
             }
             if decal.kind != .image {
                 HexColorPicker(title: "Colour", hex: decal.color ?? model.scene.style.ink) { v in model.updateDecal(decal.id) { $0.color = v } }
@@ -299,19 +284,14 @@ struct DimensionInspector: View {
             IconSegmented(selection: Binding(get: { dim.units }, set: { v in model.updateDimension(dim.id) { $0.units = v } }),
                           DimensionLine.Units.allCases.map { Segment.text($0.rawValue, $0) })
             .help("Units")
-            FieldPair {
-                NumberField(label: "Units per px", icon: "ruler", value: dim.scale, step: 0.1, range: 0.0001...10_000) { v in
-                    model.updateDimension(dim.id) { $0.scale = v }
-                }
-            } _: {
-                NumberField(label: "Decimals", icon: "textformat.123", value: Double(dim.decimals), step: 1, range: 0...3) { v in
-                    model.updateDimension(dim.id) { $0.decimals = Int(v.rounded()) }
-                }
+            NumberField(label: "Units per px", icon: "ruler", value: dim.scale, step: 0.1, range: 0.0001...10_000) { v in
+                model.updateDimension(dim.id) { $0.scale = v }
             }
-            FieldPair {
-                NumberField(label: "Offset", value: dim.offset, step: 4, range: 1...400) { v in model.updateDimension(dim.id) { $0.offset = v } }
-            } _: {
-                Color.clear
+            IconSegmented(selection: Binding(get: { dim.decimals }, set: { v in model.updateDimension(dim.id) { $0.decimals = v } }),
+                          [.text("1", 0), .text("0.1", 1), .text("0.01", 2), .text("0.001", 3)])
+            .help("Decimals")
+            SliderField(label: "Offset", icon: "arrow.up.to.line", value: dim.offset, range: 1...200) { v in
+                model.updateDimension(dim.id) { $0.offset = v }
             }
             HexColorPicker(title: "Colour", hex: dim.color ?? model.scene.style.ink) { v in model.updateDimension(dim.id) { $0.color = v } }
         } accessory: {

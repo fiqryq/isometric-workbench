@@ -17,6 +17,25 @@ extension SceneModel {
         selectedFrame = id
     }
 
+    /// Parts held by the frames `ids`; they ride along when those frames move.
+    func framedParts(_ ids: Set<Artboard.ID>) -> Set<Part.ID> {
+        Set(scene.frames.filter { ids.contains($0.id) }.flatMap(\.children))
+    }
+
+    /// Deletes the selected frames with their parts, plus any loose selected parts.
+    func deleteSelectedFrames() {
+        let frames = selectedFrames
+        let parts = framedParts(frames).union(selection)
+        edit(frames.count == 1 && selection.isEmpty ? "Delete Frame" : "Delete") { s in
+            s.frames.removeAll { frames.contains($0.id) }
+            Self.removeParts(parts, from: &s)
+        }
+        parts.forEach(build.forget)
+        selectedFrames = []
+        selection = []
+        prune()
+    }
+
     func editFrame(_ id: Artboard.ID, _ name: String, _ body: (inout Artboard) -> Void) {
         edit(name) { s in
             if let i = s.frames.firstIndex(where: { $0.id == id }) { body(&s.frames[i]) }
@@ -63,8 +82,8 @@ extension SceneModel {
     }
 
     func moveFrame(_ id: Artboard.ID, by d: Vec2) {
-        let base = scene, t = frameTime
-        edit("Move Frame") { Self.moveFrame(id, by: d, in: &$0, from: base, at: t) }
+        let base = scene, t = frameTime, rect = frameRect(id)
+        edit("Move Frame") { Self.moveFrame(id, by: d, in: &$0, from: base, at: t, rect: rect) }
     }
 
     func setFrameOrigin(_ id: Artboard.ID, _ origin: Vec2) {
@@ -106,13 +125,20 @@ extension SceneModel {
     }
 
     /// Moves a frame and its parts by `d` on screen, starting from `base`. Parts
-    /// shift every key, so their animation moves with them.
-    static func moveFrame(_ id: Artboard.ID, by d: Vec2, in s: inout SceneFile, from base: SceneFile, at t: Double) {
+    /// shift every key, so their animation moves with them. `rect` is where the
+    /// frame sat in `base`; a hugging frame with nothing visible to hug is
+    /// pinned there first, or it would stay put.
+    static func moveFrame(_ id: Artboard.ID, by d: Vec2, in s: inout SceneFile, from base: SceneFile, at t: Double, rect: Box2?) {
         guard let i = base.frames.firstIndex(where: { $0.id == id }), i < s.frames.count else { return }
         let board = base.frames[i]
-        if let o = board.origin { s.frames[i].origin = Vec2((o.x + d.x).rounded(), (o.y + d.y).rounded()) }
-        let g = groundDelta(d, in: base, at: t)
         let kids = Set(board.children)
+        if let o = board.origin {
+            s.frames[i].origin = Vec2((o.x + d.x).rounded(), (o.y + d.y).rounded())
+        } else if let rect, !base.parts.contains(where: { kids.contains($0.id) && !$0.hidden }) {
+            s.frames[i].origin = Vec2((rect.minX + d.x).rounded(), (rect.minY + d.y).rounded())
+            s.frames[i].size = Vec2(rect.width.rounded(), rect.height.rounded())
+        }
+        let g = groundDelta(d, in: base, at: t)
         for j in s.parts.indices where kids.contains(s.parts[j].id) {
             guard let from = base.parts.first(where: { $0.id == s.parts[j].id })?.anim else { continue }
             s.parts[j].anim = from.shifted(["x": g.x, "y": g.y])

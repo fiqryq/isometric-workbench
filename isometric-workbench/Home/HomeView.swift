@@ -195,30 +195,16 @@ struct HomeView: View {
         .onTapGesture { selection = nil }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: (section ?? .recents).symbol)
-                .font(.system(size: 22))
-                .foregroundStyle(.secondary)
-            Text(search.isEmpty ? (section ?? .recents).title : "Results for “\(search)”")
-                .font(.system(size: 26, weight: .bold))
-            if let folder = currentFolder, search.isEmpty {
-                Menu {
-                    Button("Rename…") { draft = folder; renamingFolder = folder }
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([library.directory(folder)]) }
-                    Divider()
-                    Button("Delete Folder", role: .destructive) { attempt { try library.deleteFolder(folder); section = .drafts } }
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-            }
-            Spacer()
-            if section == .trash, !library.trashed.isEmpty, search.isEmpty {
+    /// The window title names the section, so this row only carries actions.
+    @ViewBuilder private var header: some View {
+        if section == .trash, !library.trashed.isEmpty, search.isEmpty {
+            HStack {
+                Spacer()
                 Button("Empty Trash", role: .destructive) { attempt { try library.emptyTrash() } }
-            } else if !showTemplates, section != .trash {
+            }
+        } else if !showTemplates, section != .trash {
+            HStack {
+                Spacer()
                 Button("Show Templates") { showTemplates = true }
                     .buttonStyle(.link)
             }

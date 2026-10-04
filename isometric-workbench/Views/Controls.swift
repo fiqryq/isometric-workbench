@@ -361,17 +361,6 @@ struct WideButton: View {
     }
 }
 
-extension View {
-    /// Stretches a button, pop-up or menu across the width it is offered.
-    @ViewBuilder func fillWidth() -> some View {
-        if #available(macOS 26, *) {
-            buttonSizing(.flexible).frame(maxWidth: .infinity)
-        } else {
-            frame(maxWidth: .infinity)
-        }
-    }
-}
-
 // MARK: - Toggles and choices
 
 /// A small switch with its title after it, as in Sketch.
@@ -423,23 +412,6 @@ struct PopupField<Value: Hashable, Options: View>: View {
                 .allowsHitTesting(false)
         }
         .help(icon == nil ? "" : label)
-    }
-}
-
-/// A pop-up menu laid out as an inspector field.
-struct PickerRow<Value: Hashable, Options: View>: View {
-    let label: String
-    let selection: Binding<Value>
-    let options: Options
-
-    init(_ label: String, selection: Binding<Value>, @ViewBuilder options: () -> Options) {
-        self.label = label
-        self.selection = selection
-        self.options = options()
-    }
-
-    var body: some View {
-        PopupField(label, selection: selection) { options }
     }
 }
 
@@ -541,8 +513,20 @@ struct InspectorNote: View {
 
 // MARK: - Fields
 
+/// Brackets a drag on a slider or scrub label, so its edits reach the canvas
+/// as they happen and undo as one step.
+struct LiveEdit {
+    var begin: () -> Void
+    var end: () -> Void
+}
+
+extension EnvironmentValues {
+    @Entry var liveEdit: LiveEdit? = nil
+}
+
 /// A number in a filled field with its label or icon inside, Sketch style.
-/// Return or leaving the field commits; ↑/↓ step; dragging the label scrubs.
+/// Return or leaving the field commits; ↑/↓ step; dragging the label scrubs,
+/// live when a `liveEdit` is in the environment.
 /// `key` puts a keyframe diamond first; `suffix` is a grey unit after the value.
 struct NumberField: View {
     let label: String
@@ -553,7 +537,10 @@ struct NumberField: View {
     var suffix: String?
     var key: KeyButton?
     let onCommit: (Double) -> Void
+    @Environment(\.liveEdit) private var live
     @State private var scrub: Double?
+    @State private var scrubStart: Double?
+    @State private var labelHover = false
     @FocusState private var focused: Bool
 
     init(label: String = "", icon: String? = nil, value: Double, step: Double = 1, range: ClosedRange<Double> = -100_000...100_000,
@@ -573,12 +560,27 @@ struct NumberField: View {
             if let key { key }
             FieldLabel(text: label, icon: icon)
                 .contentShape(Rectangle())
-                .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                .onHover { inside in
+                    guard inside != labelHover else { return }
+                    labelHover = inside
+                    if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                }
+                .onDisappear { if labelHover { NSCursor.pop() } }
                 .gesture(DragGesture(minimumDistance: 2).onChanged { v in
-                    scrub = clamp(value + (v.translation.width / 4).rounded() * step, range.lowerBound, range.upperBound)
+                    if scrubStart == nil {
+                        scrubStart = value
+                        live?.begin()
+                    }
+                    let s = clamp((scrubStart ?? value) + (v.translation.width / 4).rounded() * step, range.lowerBound, range.upperBound)
+                    if live == nil {
+                        scrub = s
+                    } else if s != value {
+                        onCommit(s)
+                    }
                 }.onEnded { _ in
-                    if let s = scrub, s != value { onCommit(s) }
+                    if let live { live.end() } else if let s = scrub, s != value { onCommit(s) }
                     scrub = nil
+                    scrubStart = nil
                 })
                 .help(icon == nil ? "" : label)
             TextField(label, value: binding, format: .number.precision(.fractionLength(0...3)))
@@ -604,6 +606,162 @@ struct NumberField: View {
             let c = clamp(v, range.lowerBound, range.upperBound)
             if c != value { onCommit(c) }
         })
+    }
+}
+
+/// A field that is also a slider: the accent fill shows where the value sits in
+/// `range`. Dragging sets it live; a click types an exact value; ↑/↓ step while
+/// typing. Either end of the range gives a tap on the trackpad.
+struct SliderField: View {
+    let label: String
+    var icon: String?
+    let value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 1
+    var suffix: String?
+    var key: KeyButton?
+    let onChange: (Double) -> Void
+
+    @Environment(\.liveEdit) private var live
+    @Environment(\.isEnabled) private var enabled
+    @State private var width: CGFloat = 1
+    @State private var dragging = false
+    @State private var hovering = false
+    @State private var typing = false
+    @State private var sent: Double?
+    @FocusState private var focused: Bool
+
+    init(label: String, icon: String? = nil, value: Double, range: ClosedRange<Double>, step: Double = 1, suffix: String? = nil,
+         key: KeyButton? = nil, onChange: @escaping (Double) -> Void) {
+        self.label = label
+        self.icon = icon
+        self.value = value
+        self.range = range
+        self.step = step
+        self.suffix = suffix
+        self.key = key
+        self.onChange = onChange
+    }
+
+    private var fraction: CGFloat {
+        let span = range.upperBound - range.lowerBound
+        return span > 0 ? CGFloat(clamp((value - range.lowerBound) / span, 0, 1)) : 0
+    }
+
+    private var text: String {
+        value.formatted(.number.precision(.fractionLength(0...(step < 1 ? 2 : 0))))
+    }
+
+    var body: some View {
+        let fill = max(0, width * fraction)
+        ZStack(alignment: .leading) {
+            InspectorMetrics.fieldShape.fill(InspectorMetrics.fieldFill)
+            Rectangle()
+                .fill(Color.accentColor.opacity(dragging ? 0.3 : hovering ? 0.22 : 0.16))
+                .frame(width: fill)
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: dragging ? 3 : 2, height: dragging ? 18 : 12)
+                .offset(x: min(max(fill - 1.5, 2), width - 4))
+                .opacity(hovering || dragging ? 1 : 0.55)
+            HStack(spacing: 6) {
+                if let key { key }
+                FieldLabel(text: label, icon: icon)
+                Spacer(minLength: 4)
+                if typing {
+                    TextField(label, value: Binding(get: { value }, set: { commit($0) }), format: .number.precision(.fractionLength(0...3)))
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .focused($focused)
+                        .onSubmit { typing = false }
+                        .onExitCommand { typing = false }
+                        .onKeyPress(.upArrow) { commit(value + step); return .handled }
+                        .onKeyPress(.downArrow) { commit(value - step); return .handled }
+                } else {
+                    Text(text)
+                        .monospacedDigit()
+                        .fontWeight(dragging ? .semibold : .regular)
+                        .foregroundStyle(dragging ? Color.accentColor : Color.primary)
+                        .contentTransition(.numericText(value: value))
+                }
+                if let suffix {
+                    Text(suffix).foregroundStyle(.secondary).fixedSize().padding(.leading, -4)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+        .frame(maxWidth: .infinity, minHeight: InspectorMetrics.rowHeight, maxHeight: InspectorMetrics.rowHeight)
+        .clipShape(InspectorMetrics.fieldShape)
+        .overlay {
+            if focused { InspectorMetrics.fieldShape.strokeBorder(Color.accentColor, lineWidth: 1.5) }
+        }
+        .contentShape(InspectorMetrics.fieldShape)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = max(1, $0) }
+        .gesture(drag, including: typing ? .subviews : .all)
+        .onHover { inside in
+            if inside && enabled && !hovering {
+                hovering = true
+                NSCursor.resizeLeftRight.push()
+            } else if !inside && hovering {
+                hovering = false
+                NSCursor.pop()
+            }
+        }
+        .onDisappear { if hovering { NSCursor.pop() } }
+        .onChange(of: focused) { _, on in if !on { typing = false } }
+        .animation(.snappy(duration: 0.18), value: dragging)
+        .animation(.snappy(duration: 0.18), value: hovering)
+        .animation(dragging ? nil : .spring(duration: 0.3, bounce: 0.2), value: value)
+        .opacity(enabled ? 1 : 0.45)
+        .help(icon == nil ? "" : label)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(text + (suffix ?? ""))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: commit(value + step)
+            case .decrement: commit(value - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                guard !typing else { return }
+                if !dragging {
+                    guard abs(g.translation.width) >= 2 else { return }
+                    dragging = true
+                    sent = value
+                    live?.begin()
+                }
+                let span = range.upperBound - range.lowerBound
+                let v = clamp(((range.lowerBound + Double(g.location.x / width) * span) / step).rounded() * step,
+                              range.lowerBound, range.upperBound)
+                guard v != sent else { return }
+                if v == range.lowerBound || v == range.upperBound {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+                }
+                sent = v
+                onChange(v)
+            }
+            .onEnded { _ in
+                if dragging {
+                    dragging = false
+                    sent = nil
+                    live?.end()
+                } else if enabled {
+                    typing = true
+                    focused = true
+                }
+            }
+    }
+
+    private func commit(_ v: Double) {
+        let c = clamp(v, range.lowerBound, range.upperBound)
+        if c != value { onChange(c) }
     }
 }
 

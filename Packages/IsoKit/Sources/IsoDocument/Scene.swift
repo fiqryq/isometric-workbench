@@ -374,7 +374,8 @@ public struct SceneFile: Sendable, Hashable {
     /// Layer tree with groups, back to front. Empty means plain `parts` order; read `outline`.
     public var layers: [LayerNode] = []
     public var drawOrder = DrawOrder.depth
-    /// Empty means one implicit page. The active page's state lives in the fields above.
+    /// Empty means one implicit page. The active page's parts, art, frames, camera
+    /// and timing live in the fields above.
     public var pages: [Page] = []
     public var activePage: Page.ID?
     public var extra: [String: JSONValue] = [:]
@@ -406,9 +407,9 @@ public struct SceneFile: Sendable, Hashable {
         pages = (o["pages"]?.array ?? []).map(Page.init(json:))
         activePage = o["activePage"]?.string ?? pages.first?.id
         if !pages.isEmpty, activePageIndex == nil { activePage = pages[0].id }
-        let ids = parts.map(\.id)
-        frames.adoptLegacy(ids)
-        for i in pages.indices { pages[i].frames.adoptLegacy(ids) }
+        resolveLegacyPages()
+        frames.adoptLegacy(parts.map(\.id))
+        for i in pages.indices { pages[i].frames.adoptLegacy(pages[i].parts.map(\.id)) }
         extra = o.filter { !Self.knownKeys.contains($0.key) }
     }
 

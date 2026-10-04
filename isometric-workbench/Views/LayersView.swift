@@ -107,7 +107,7 @@ struct LayersView: View {
         return VStack(spacing: 0) {
             LayerRow(
                 depth: 0, symbol: "number", tint: .blue, name: f.name,
-                selected: model.selectedFrame == f.id,
+                selected: model.selectedFrames.contains(f.id),
                 expanded: Binding(
                     get: { !closedFrames.contains(f.id) },
                     set: { if $0 { closedFrames.remove(f.id) } else { closedFrames.insert(f.id) } }),

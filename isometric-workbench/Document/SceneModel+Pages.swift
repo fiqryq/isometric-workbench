@@ -14,9 +14,7 @@ extension SceneModel {
     /// on another page brings that page back.
     func switchPage(_ id: Page.ID) {
         guard id != activePageID else { return }
-        pause()
-        scene.activatePage(id)
-        afterPageChange()
+        changePage { $0.scene.activatePage(id) }
     }
 
     func switchPage(by offset: Int) {
@@ -27,18 +25,15 @@ extension SceneModel {
     }
 
     func addPage(duplicate: Bool = false) {
-        pause()
-        edit(duplicate ? "Duplicate Page" : "Add Page") { $0.addPage(duplicate: duplicate) }
-        afterPageChange()
+        changePage { $0.edit(duplicate ? "Duplicate Page" : "Add Page") { $0.addPage(duplicate: duplicate) } }
         status = "\(activePageName) added"
     }
 
     func deletePage(_ id: Page.ID) {
         guard pages.count > 1 else { return }
         let name = pages.first { $0.id == id }?.name ?? "Page"
-        pause()
-        edit("Delete Page") { $0.deletePage(id) }
-        afterPageChange()
+        changePage { $0.edit("Delete Page") { $0.deletePage(id) } }
+        pageViews[id] = nil
         status = "\(name) deleted"
     }
 
@@ -53,8 +48,29 @@ extension SceneModel {
         edit("Move Page") { $0.movePage(id, to: i + offset) }
     }
 
-    private func afterPageChange() {
+    /// Runs a page change: what was picked belongs to the old page, and each page
+    /// keeps its own zoom and pan, like Figma. A page seen for the first time is fitted.
+    private func changePage(_ body: (SceneModel) -> Void) {
+        let old = activePageID
+        pause()
+        pageViews[old] = (zoom, pan)
+        body(self)
+        guard activePageID != old else { return prune() }
+        selection = []
+        pickedFaces = []
+        pickedRings = []
+        pickedSegments = []
+        pickedKeys = []
+        annotation = nil
+        selectedFrame = nil
+        sketch = nil
         prune()
         seek(min(time, scene.duration))
+        if let v = pageViews[activePageID] {
+            zoom = v.zoom
+            pan = v.pan
+        } else {
+            zoomToFit()
+        }
     }
 }

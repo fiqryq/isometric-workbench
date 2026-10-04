@@ -41,7 +41,6 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
-        .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.06)))
         .padding(.horizontal, 8)
         .padding(.bottom, 4)
         .help(title)

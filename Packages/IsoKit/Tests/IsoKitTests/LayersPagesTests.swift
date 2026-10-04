@@ -52,42 +52,40 @@ struct LayersPagesTests {
         #expect(back.group("outer")?.hidden == true)
     }
 
-    @Test("Pages share parts but keep their own camera, timing and transforms")
+    @Test("Each page is its own canvas with its own parts, art, camera and timing")
     func pages() throws {
         var s = scene(["a", "b"])
         s.duration = 2
         s.parts[0].anim.base["x"] = 10
         s.parts[0].anim.keys["z"] = [Keyframe(t: 0, v: 0), Keyframe(t: 1, v: 50)]
+        s.guides = [Guide(a: .zero, b: Vec3(10, 0, 0))]
         #expect(s.allPages.count == 1)
 
         let second = s.addPage()
         #expect(s.pages.count == 2 && s.activePage == second)
-        #expect(s.parts[0].anim.base("x") == 10)
-        #expect(!s.parts[0].anim.isAnimated)
+        #expect(s.parts.isEmpty && s.guides.isEmpty && s.frames.isEmpty)
+        #expect(s.duration == 2)
 
         s.duration = 6
-        s.parts[0].anim.base["x"] = 99
-        s.parts[1].hidden = true
         s.camera.base["spin"] = 45
         s.parts.append(Part(id: "c", name: "C", ops: [.box(w: 5, d: 5, h: 5)]))
 
         let first = s.pages[0].id
         s.activatePage(first)
         #expect(s.duration == 2)
-        #expect(s.parts[0].anim.base("x") == 10)
-        #expect(s.parts[0].anim.isAnimated)
-        #expect(!s.parts[1].hidden)
+        #expect(s.parts.map(\.id) == ["a", "b"])
+        #expect(s.parts[0].anim.base("x") == 10 && s.parts[0].anim.isAnimated)
+        #expect(s.guides.count == 1)
         #expect(s.camera.base("spin") == 0)
-        #expect(s.parts.count == 3)
 
         let back = try SceneFile.decode(s.encoded())
-        #expect(back.activePage == first)
+        #expect(back.activePage == first && back.parts.map(\.id) == ["a", "b"])
         var other = back
         other.activatePage(second)
-        #expect(other.duration == 6 && other.parts[0].anim.base("x") == 99 && other.parts[1].hidden)
+        #expect(other.duration == 6 && other.parts.map(\.id) == ["c"] && other.guides.isEmpty)
 
         let copy = s.addPage(duplicate: true)
-        #expect(s.parts[0].anim.isAnimated)
+        #expect(s.parts.map(\.id) == ["a", "b"] && s.parts[0].anim.isAnimated)
         #expect(s.pages.map(\.id) == [first, copy, second])
         s.movePage(copy, to: 2)
         #expect(s.pages.map(\.id) == [first, second, copy])
@@ -99,5 +97,25 @@ struct LayersPagesTests {
         s.deletePage(second)
         s.deletePage(first)
         #expect(s.pages.count == 1)
+    }
+
+    @Test("Pages from files where every page showed the same parts keep what they showed")
+    func legacyPages() throws {
+        let json: JSONValue = [
+            "v": 2, "name": "Old",
+            "parts": [["id": "a", "name": "A", "ops": [], "base": ["x": 5]]],
+            "pages": [
+                ["id": "p1", "name": "Page 1", "anims": ["a": ["base": ["x": 5]]], "hidden": []],
+                ["id": "p2", "name": "Page 2", "anims": ["a": ["base": ["x": 80]]], "hidden": ["a"]],
+            ],
+            "activePage": "p1",
+        ]
+        var s = try SceneFile(json: json)
+        #expect(s.parts.map(\.id) == ["a"])
+        s.activatePage("p2")
+        #expect(s.parts.map(\.id) == ["a"] && s.parts[0].anim.base("x") == 80 && s.parts[0].hidden)
+        s.parts.removeAll()
+        s.activatePage("p1")
+        #expect(s.parts.count == 1 && s.parts[0].anim.base("x") == 5 && !s.parts[0].hidden)
     }
 }

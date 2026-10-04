@@ -72,7 +72,8 @@ CI runs both on every pull request and on pushes to `main`.
 | V · A · R · O · G · P · L | Select · Frame · Rectangle · Ellipse · Polygon · Pen · Loop rings |
 | F | Zoom to fit |
 | ⌘-scroll / middle-drag | Zoom / pan |
-| Space | Play or pause |
+| Space-drag | Pan |
+| Space (tap) | Play or pause |
 | E | Explode preset |
 | ⌘K | Add keyframe |
 | ⌥⌘G | Frame selection |

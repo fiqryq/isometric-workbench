@@ -90,7 +90,7 @@ final class BuildService {
             lastRuns[part.id] = r
             return r
         }
-        if let mesh = meshCache.get(part.ops) { requestRuns(part.id, key, mesh) } else { requestMesh(part.id, part.ops) }
+        if let mesh = meshCache.get(part.ops) { requestRuns(part.id, key, mesh) } else { requestMesh(part.id, part.ops, runs: key) }
         return lastRuns[part.id]
     }
 
@@ -141,30 +141,51 @@ final class BuildService {
         return out
     }
 
-    private func requestMesh(_ id: Part.ID, _ ops: [Op]) {
+    /// Builds a mesh; with `runs`, also renders it at that pose in the same job,
+    /// so an edited part reaches the canvas in one trip instead of two.
+    private func requestMesh(_ id: Part.ID, _ ops: [Op], runs key: RunKey? = nil) {
         wantedMesh[id] = ops
+        if let key { wantedRuns[id] = key }
         guard meshJobs[id] == nil else { return }
-        meshJobs[id] = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<PreparedMesh, Error> in
-                Result { try PreparedMesh.build(ops) }
-            }.value
-            self?.finishMesh(id, ops, result)
+        let pose = key.flatMap { $0.ops == ops ? $0 : nil }
+        meshJobs[id] = Task(priority: .userInitiated) { [weak self] in
+            let result = await Self.build(ops, pose: pose)
+            self?.finishMesh(id, ops, pose, result)
         }
         refreshBuilding()
     }
 
-    private func finishMesh(_ id: Part.ID, _ ops: [Op], _ result: Result<PreparedMesh, Error>) {
+    @concurrent
+    private static func build(_ ops: [Op], pose: RunKey?) async -> Result<(PreparedMesh, [Run]?), Error> {
+        Result {
+            let mesh = try PreparedMesh.build(ops)
+            let runs = pose.map { (try? Renderer.render(mesh, options: $0.options(mesh))) ?? [] }
+            return (mesh, runs)
+        }
+    }
+
+    @concurrent
+    private static func render(_ mesh: PreparedMesh, _ options: RenderOptions) async -> [Run] {
+        (try? Renderer.render(mesh, options: options)) ?? []
+    }
+
+    private func finishMesh(_ id: Part.ID, _ ops: [Op], _ pose: RunKey?, _ result: Result<(PreparedMesh, [Run]?), Error>) {
         meshJobs[id] = nil
         switch result {
-        case .success(let mesh):
+        case .success(let (mesh, runs)):
             meshCache.set(ops, mesh)
             errors[id] = mesh.isEmpty ? "This part has no geometry." : nil
             if !mesh.isEmpty { lastMesh[id] = mesh }
+            if let runs, let pose {
+                runCache.set(pose, runs)
+                lastRuns[id] = runs
+                if wantedRuns[id] == pose { wantedRuns[id] = nil }
+            }
         case .failure(let error):
             errors[id] = error.localizedDescription
         }
         if let next = wantedMesh[id], next != ops, meshCache.get(next) == nil {
-            requestMesh(id, next)
+            requestMesh(id, next, runs: wantedRuns[id])
         } else {
             wantedMesh[id] = nil
         }
@@ -176,10 +197,8 @@ final class BuildService {
         wantedRuns[id] = key
         guard runJobs[id] == nil else { return }
         let options = key.options(mesh)
-        runJobs[id] = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> [Run] in
-                (try? Renderer.render(mesh, options: options)) ?? []
-            }.value
+        runJobs[id] = Task(priority: .userInitiated) { [weak self] in
+            let result = await Self.render(mesh, options)
             self?.finishRuns(id, key, result)
         }
         refreshBuilding()

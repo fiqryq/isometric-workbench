@@ -21,10 +21,16 @@ final class SceneModel {
         didSet { snapshot.value = scene }
     }
     var selection: Set<Part.ID> = [] {
-        didSet { if !selection.isEmpty { selectedFrame = nil } }
+        didSet { if !selection.isEmpty { selectedFrames = [] } }
     }
-    /// The selected frame, when a frame rather than its parts is selected.
-    var selectedFrame: Artboard.ID?
+    /// Selected frames. A marquee can pick frames and loose parts together;
+    /// set `selectedFrames` after `selection` to keep both.
+    var selectedFrames: Set<Artboard.ID> = []
+    /// The frame the inspector edits: set when one frame and nothing else is picked.
+    var selectedFrame: Artboard.ID? {
+        get { selectedFrames.count == 1 && selection.isEmpty ? selectedFrames.first : nil }
+        set { selectedFrames = newValue.map { [$0] } ?? [] }
+    }
     var pickedFaces: [PickedFace] = []
     var status = "Ready"
 
@@ -37,7 +43,7 @@ final class SceneModel {
     /// A finished outline waiting for Extrude / Push / Revolve / Keep.
     var sketch: PendingSketch?
     var annotation: AnnotationRef? {
-        didSet { if annotation != nil { selectedFrame = nil } }
+        didSet { if annotation != nil { selectedFrames = [] } }
     }
     var pickedRings: [RingPick] = []
     var pickedSegments: [SegmentPick] = []
@@ -58,7 +64,11 @@ final class SceneModel {
     let build = BuildService()
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored var viewportSize = CGSize(width: 800, height: 600)
+    /// Zoom and pan each page was left at, restored when it comes back.
+    @ObservationIgnored var pageViews: [Page.ID: (zoom: Double, pan: Vec2)] = [:]
     @ObservationIgnored private var gestureStart: SceneFile?
+    /// Set while a live edit runs: the first edit's undo name, or empty before one.
+    @ObservationIgnored private var liveEditName: String?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var playStart = 0.0
     @ObservationIgnored private let snapshot: SceneSnapshot
@@ -87,10 +97,27 @@ final class SceneModel {
     // MARK: - Undo
 
     func edit(_ name: String, _ body: (inout SceneFile) -> Void) {
+        if let live = liveEditName {
+            if live.isEmpty { liveEditName = name }
+            return updateGesture(body)
+        }
         let old = scene
         body(&scene)
         guard scene != old else { return }
         registerUndo(old, name)
+    }
+
+    /// Starts a slider or scrub drag: every edit lands on the canvas at once,
+    /// and the whole drag undoes as one step.
+    func beginLiveEdit() {
+        liveEditName = ""
+        beginGesture()
+    }
+
+    func endLiveEdit() {
+        guard let name = liveEditName else { return }
+        liveEditName = nil
+        endGesture(name.isEmpty ? "Edit" : name)
     }
 
     func beginGesture() {
@@ -132,7 +159,8 @@ final class SceneModel {
         if let a = annotation, !scene.contains(a) { annotation = nil }
         if let h = sketch?.plane.host, !ids.contains(h) { sketch = nil }
         pickedKeys = pickedKeys.filter { $0.exists(in: scene) }
-        if let f = selectedFrame, !scene.frames.contains(where: { $0.id == f }) { selectedFrame = nil }
+        let frameIDs = Set(scene.frames.map(\.id))
+        if !selectedFrames.isSubset(of: frameIDs) { selectedFrames.formIntersection(frameIDs) }
     }
 
     // MARK: - Parts
@@ -162,7 +190,7 @@ final class SceneModel {
     func deleteSelection() {
         if !pickedKeys.isEmpty { return deletePickedKeys() }
         if let a = annotation { return deleteAnnotation(a) }
-        if let f = selectedFrame { return deleteFrame(f, keepParts: false) }
+        if !selectedFrames.isEmpty { return deleteSelectedFrames() }
         guard !selection.isEmpty else { return }
         let ids = selection
         edit(ids.count == 1 ? "Delete Part" : "Delete Parts") { Self.removeParts(ids, from: &$0) }
@@ -237,11 +265,13 @@ final class SceneModel {
     func value(_ prop: String, of part: Part) -> Double { part.anim.value(prop, at: frameTime) }
 
     func nudge(_ d: Vec3) {
-        if let f = selectedFrame { return moveFrame(f, by: Vec2(d.x, d.y)) }
-        let ids = Set(selectedParts.filter { !$0.locked }.map(\.id))
-        guard !ids.isEmpty else { return }
-        let t = frameTime, auto = autoKey
-        edit("Nudge") { s in
+        let frames = selectedFrames
+        let carried = framedParts(frames)
+        let ids = Set(selectedParts.filter { !$0.locked && !carried.contains($0.id) }.map(\.id))
+        guard !ids.isEmpty || !frames.isEmpty else { return }
+        let base = scene, t = frameTime, auto = autoKey, layout = frame()
+        edit(frames.isEmpty ? "Nudge" : "Move") { s in
+            for f in frames { Self.moveFrame(f, by: Vec2(d.x, d.y), in: &s, from: base, at: t, rect: layout.board(f)?.rect) }
             for i in s.parts.indices where ids.contains(s.parts[i].id) {
                 for (k, prop) in ["x", "y", "z"].enumerated() where d[k] != 0 {
                     s.parts[i].anim.set(prop, s.parts[i].anim.value(prop, at: t) + d[k], at: t, autoKey: auto)
@@ -464,7 +494,7 @@ final class SceneModel {
     }
 
     private func fit() {
-        let b = frame().bounds
+        let b = frame(immediate: true).bounds
         let size = viewportSize
         guard b.width > 0, b.height > 0, size.width > 10, size.height > 10 else { return }
         // Keep the drawing clear of the floating tool pills along the top.

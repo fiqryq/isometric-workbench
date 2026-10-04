@@ -46,11 +46,23 @@ final class ViewportView: NSView {
     private var penPoints: [Vec2] = []
     private var hover: Vec2?
 
+    private enum HoverTarget: Equatable {
+        case part(Part.ID)
+        case frame(Artboard.ID)
+    }
+
+    /// What the select tool would pick under the pointer, outlined as in Figma.
+    private var hoverTarget: HoverTarget?
+
     private var ringCache: (key: String, rings: [(RingPick, [(Vec2, Vec2)])])?
 
     private enum DragMode {
-        case move, lift, spin, pan, orbit, annotation, frameMove, frameResize, frameDraw
+        case move, lift, spin, pan, orbit, annotation, frameMove, frameResize, frameDraw, marquee
     }
+
+    /// Space held down: drags pan, as in Figma. A tap with no pan plays.
+    private var spaceHeld = false
+    private var spacePanned = false
 
     private struct Drag {
         var mode: DragMode
@@ -69,6 +81,9 @@ final class ViewportView: NSView {
         var boardStart = Box2.empty
         /// The frames when the drag began, for dropping parts into them.
         var boards: [SheetLayout] = []
+        /// The selection when a marquee began, kept when extending with ⇧.
+        var baseSelection: Set<Part.ID> = []
+        var baseFrames: Set<Artboard.ID> = []
     }
 
     init(model: SceneModel) {
@@ -160,7 +175,7 @@ final class ViewportView: NSView {
         if model.tool == .rings { paintRings(frame, in: ctx) }
         paintSketches(frame, in: ctx)
         ctx.restoreGState()
-        paintFrameChrome(frame, in: ctx)
+        paintChrome(frame, in: ctx)
 
         if frame.items.isEmpty && model.scene.isEmpty { paintEmptyHint(in: ctx) }
 
@@ -174,16 +189,9 @@ final class ViewportView: NSView {
         NSColor.controlAccentColor.usingColorSpace(.sRGB)?.cgColor ?? CGColor(srgbRed: 0, green: 0.5, blue: 1, alpha: 1)
     }
 
+    /// Picked faces, rings and annotations; outlines and handles are drawn in
+    /// view space by `paintChrome`.
     private func paintSelection(_ frame: Frame, in ctx: CGContext) {
-        let accent = accent
-        for item in frame.items where model.selection.contains(item.part.id) {
-            ctx.saveGState()
-            ctx.setStrokeColor(accent)
-            ctx.setLineWidth(1 * px)
-            ctx.setLineDash(phase: 0, lengths: [4 * px, 3 * px])
-            ctx.stroke(item.box.cgRect.insetBy(dx: -6 * px, dy: -6 * px))
-            ctx.restoreGState()
-        }
         for f in model.pickedFaces {
             guard let item = frame.item(for: f.partID) else { continue }
             highlight(item, in: ctx) { $0.faceKey == f.face.key }
@@ -359,48 +367,100 @@ final class ViewportView: NSView {
 
     private var selectedLayout: SheetLayout? { frameCache?.board(model.selectedFrame) }
 
-    /// Figma-style name labels, the frame being drawn, and for the selected
-    /// frame an outline, corner handles and its size.
-    private func paintFrameChrome(_ frame: Frame, in ctx: CGContext) {
+    /// A rect snapped so 1 pt strokes land on whole pixels.
+    private func crisp(_ r: CGRect) -> CGRect {
+        CGRect(x: r.minX.rounded() + 0.5, y: r.minY.rounded() + 0.5, width: max(0, r.width.rounded() - 1), height: max(0, r.height.rounded() - 1))
+    }
+
+    /// Figma-style selection in view space, so lines stay 1 pt at any zoom:
+    /// frame names, a hover outline, an outline per picked part and frame, a
+    /// box around a multiple selection, resize handles and size for a lone
+    /// frame, and the marquee.
+    private func paintChrome(_ frame: Frame, in ctx: CGContext) {
+        let accent = accent
+        let picking = model.tool == .select && drag == nil
+        let hovered: Artboard.ID? = if picking, case .frame(let id) = hoverTarget { id } else { nil }
+
         let para = NSMutableParagraphStyle()
         para.lineBreakMode = .byTruncatingTail
         let quiet = NSColor(cgColor: RGB(hex: frame.style.bg).mix(.black, 0.55).cgColor) ?? .gray
         let accentInk = NSColor(cgColor: accent) ?? .controlAccentColor
         for b in frame.boards {
-            let ink = b.id == model.selectedFrame ? accentInk : quiet
-            (b.name as NSString).draw(in: frameLabelRect(b), withAttributes: [.font: Self.frameLabelFont, .foregroundColor: ink, .paragraphStyle: para])
+            let hot = model.selectedFrames.contains(b.id) || b.id == hovered
+            (b.name as NSString).draw(in: frameLabelRect(b), withAttributes: [.font: Self.frameLabelFont, .foregroundColor: hot ? accentInk : quiet, .paragraphStyle: para])
         }
-        if let d = drag, d.mode == .frameDraw, d.moved {
-            let r = CGRect(x: min(d.start.x, d.last.x), y: min(d.start.y, d.last.y), width: abs(d.last.x - d.start.x), height: abs(d.last.y - d.start.y))
-            ctx.saveGState()
-            ctx.setFillColor(accent.copy(alpha: 0.06) ?? accent)
-            ctx.fill(r)
-            ctx.setStrokeColor(accent)
-            ctx.setLineWidth(1)
-            ctx.stroke(r)
-            ctx.restoreGState()
-        }
-        guard let b = frame.board(model.selectedFrame) else { return }
-        let r = viewRect(b.rect)
+
         ctx.saveGState()
         ctx.setStrokeColor(accent)
         ctx.setLineWidth(1)
-        ctx.stroke(r)
-        for c in [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)] {
-            let h = CGRect(x: c.x - 3.5, y: c.y - 3.5, width: 7, height: 7)
-            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-            ctx.fill(h)
-            ctx.stroke(h)
+
+        if picking, let t = hoverTarget {
+            switch t {
+            case .part(let id) where !model.selection.contains(id):
+                if let item = frame.item(for: id) { ctx.stroke(crisp(viewRect(item.box))) }
+            case .frame(let id) where !model.selectedFrames.contains(id):
+                if let b = frame.board(id) { ctx.stroke(crisp(viewRect(b.rect))) }
+            default: break
+            }
         }
-        let size = "\(jsNumberString(b.rect.width)) × \(jsNumberString(b.rect.height))" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.white]
-        let m = size.size(withAttributes: attrs)
-        let pill = CGRect(x: r.midX - m.width / 2 - 5, y: r.maxY + 6, width: m.width + 10, height: m.height + 2)
+
+        let partRects = frame.items.filter { model.selection.contains($0.part.id) }.map { viewRect($0.box) }
+        let frameRects = frame.boards.filter { model.selectedFrames.contains($0.id) }.map { viewRect($0.rect) }
+        let picked = partRects + frameRects
+        picked.forEach { ctx.stroke(crisp($0)) }
+        if picked.count > 1 {
+            ctx.stroke(crisp(picked.dropFirst().reduce(picked[0]) { $0.union($1) }.insetBy(dx: -4, dy: -4)))
+        }
+
+        if let b = selectedLayout {
+            let r = crisp(viewRect(b.rect))
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            for x in [r.minX, r.midX, r.maxX] {
+                for y in [r.minY, r.midY, r.maxY] where x != r.midX || y != r.midY {
+                    // Edge handles only when the frame is big enough to keep them apart.
+                    if (x == r.midX && r.width < 48) || (y == r.midY && r.height < 48) { continue }
+                    let h = CGRect(x: (x - 4).rounded() + 0.5, y: (y - 4).rounded() + 0.5, width: 7, height: 7)
+                    ctx.fill(h)
+                    ctx.stroke(h)
+                }
+            }
+        }
+        ctx.restoreGState()
+
+        if partRects.isEmpty, !frameRects.isEmpty {
+            let boxes = frame.boards.filter { model.selectedFrames.contains($0.id) }.map(\.rect)
+            let u = boxes.dropFirst().reduce(boxes[0]) { $0.union($1) }
+            let all = frameRects.dropFirst().reduce(frameRects[0]) { $0.union($1) }
+            paintSizePill("\(jsNumberString(u.width.rounded())) × \(jsNumberString(u.height.rounded()))", below: all, in: ctx)
+        }
+
+        if let d = drag, d.mode == .frameDraw || d.mode == .marquee, d.moved {
+            let r = CGRect(x: min(d.start.x, d.last.x), y: min(d.start.y, d.last.y), width: abs(d.last.x - d.start.x), height: abs(d.last.y - d.start.y))
+            ctx.saveGState()
+            ctx.setFillColor(accent.copy(alpha: 0.08) ?? accent)
+            ctx.fill(r)
+            ctx.setStrokeColor(accent)
+            ctx.setLineWidth(1)
+            ctx.stroke(crisp(r))
+            ctx.restoreGState()
+            if d.mode == .frameDraw {
+                paintSizePill("\(jsNumberString((r.width / model.zoom).rounded())) × \(jsNumberString((r.height / model.zoom).rounded()))", below: r, in: ctx)
+            }
+        }
+    }
+
+    /// Figma's dimension label: white figures on an accent pill under `r`.
+    private func paintSizePill(_ text: String, below r: CGRect, in ctx: CGContext) {
+        let s = text as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium), .foregroundColor: NSColor.white]
+        let m = s.size(withAttributes: attrs)
+        let pill = CGRect(x: (r.midX - m.width / 2 - 6).rounded(), y: (r.maxY + 8).rounded(), width: (m.width + 12).rounded(.up), height: (m.height + 4).rounded(.up))
+        ctx.saveGState()
         ctx.setFillColor(accent)
-        ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil))
+        ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 4, cornerHeight: 4, transform: nil))
         ctx.fillPath()
         ctx.restoreGState()
-        size.draw(at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: attrs)
+        s.draw(at: CGPoint(x: pill.minX + 6, y: pill.minY + 2), withAttributes: attrs)
     }
 
     private func paintEmptyHint(in ctx: CGContext) {
@@ -548,7 +608,9 @@ final class ViewportView: NSView {
     // MARK: - Mouse
 
     override func mouseMoved(with event: NSEvent) {
-        if model.tool == .select, let b = selectedLayout {
+        if spaceHeld {
+            NSCursor.openHand.set()
+        } else if model.tool == .select, let b = selectedLayout {
             switch frameHandle(at: local(event), b.rect) {
             case let h? where h.y == 0: NSCursor.resizeLeftRight.set()
             case let h? where h.x == 0: NSCursor.resizeUpDown.set()
@@ -556,6 +618,7 @@ final class ViewportView: NSView {
             case nil: NSCursor.arrow.set()
             }
         }
+        setHover(model.tool == .select && !spaceHeld ? pickTarget(at: local(event)) : nil)
         guard penTarget != nil else { return }
         hover = scenePoint(local(event))
         needsDisplay = true
@@ -563,7 +626,24 @@ final class ViewportView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hover = nil
+        setHover(nil)
         if penTarget != nil { needsDisplay = true }
+    }
+
+    private func setHover(_ t: HoverTarget?) {
+        guard t != hoverTarget else { return }
+        hoverTarget = t
+        needsDisplay = true
+    }
+
+    /// What a click with the select tool would pick: a frame by its name, then
+    /// a part, then a frame by its empty area.
+    private func pickTarget(at p: CGPoint) -> HoverTarget? {
+        guard let frame = frameCache else { return nil }
+        if let b = frame.boards.last(where: { frameLabelRect($0).contains(p) }) { return .frame(b.id) }
+        if let h = hit(p) { return .part(h.part.id) }
+        let s = scenePoint(p)
+        return frame.boards.last { $0.rect.contains(s) }.map { .frame($0.id) }
     }
 
     // Middle-button drag pans the canvas with any tool, as in Figma and Sketch.
@@ -590,6 +670,12 @@ final class ViewportView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let p = local(event)
+        if spaceHeld {
+            spacePanned = true
+            NSCursor.closedHand.set()
+            drag = Drag(mode: .pan, start: p, last: p, startPan: model.pan)
+            return
+        }
         switch model.tool {
         case .rectangle, .ellipse, .polygon:
             guard let t = drawTarget(at: p), let q = t.toPlane(scenePoint(p)) else { return }
@@ -613,8 +699,7 @@ final class ViewportView: NSView {
             return
         }
         if let b = frameCache?.boards.last(where: { frameLabelRect($0).contains(p) }) {
-            model.selectFrame(b.id)
-            drag = Drag(mode: .frameMove, start: p, last: p, board: b.id, boardStart: b.rect)
+            grabFrame(b, at: p, extend: flags.contains(.shift))
             return
         }
         let h = hit(p)
@@ -642,9 +727,60 @@ final class ViewportView: NSView {
             }
             let mode: DragMode = flags.contains(.option) ? .spin : extend ? .lift : .move
             drag = Drag(mode: mode, start: p, last: p, hitPart: h.part.id, extend: extend, boards: frameCache?.boards ?? [])
+        } else if flags.contains(.option) {
+            drag = Drag(mode: .orbit, start: p, last: p)
+        } else if let b = frameCache?.boards.last(where: { $0.rect.contains(scenePoint(p)) }) {
+            // A frame's empty area grabs the frame, so it can go anywhere on the canvas.
+            grabFrame(b, at: p, extend: flags.contains(.shift))
         } else {
-            drag = Drag(mode: flags.contains(.option) ? .orbit : .pan, start: p, last: p, startPan: model.pan)
+            let extend = flags.contains(.shift)
+            if !extend {
+                model.selection = []
+                model.pickedFaces = []
+                model.selectedFrames = []
+            }
+            drag = Drag(mode: .marquee, start: p, last: p, extend: extend, baseSelection: model.selection, baseFrames: model.selectedFrames)
         }
+    }
+
+    /// Picks a frame for dragging. A frame already in a multiple selection keeps
+    /// it, so the whole selection moves; ⇧ adds or removes the frame.
+    private func grabFrame(_ b: SheetLayout, at p: CGPoint, extend: Bool) {
+        if extend {
+            model.annotation = nil
+            model.selectedFrames.formSymmetricDifference([b.id])
+        } else if !model.selectedFrames.contains(b.id) {
+            model.selectFrame(b.id)
+        }
+        drag = Drag(mode: .frameMove, start: p, last: p, extend: extend, board: b.id, boardStart: b.rect, boards: frameCache?.boards ?? [])
+    }
+
+    /// As in Figma, frames the marquee touches are picked whole; loose parts it
+    /// touches are picked on their own.
+    private func updateMarquee(_ d: Drag) {
+        guard let frame = frameCache else { return }
+        let a = scenePoint(d.start), b = scenePoint(d.last)
+        let r = Box2(minX: min(a.x, b.x), minY: min(a.y, b.y), maxX: max(a.x, b.x), maxY: max(a.y, b.y))
+        let frames = d.baseFrames.union(frame.boards.filter { $0.rect.intersects(r) }.map(\.id))
+        let hits = frame.items.filter { item in
+            !item.part.locked && item.box.intersects(r) && !(item.board.map(frames.contains) ?? false)
+        }.map(\.part.id)
+        let parts = d.baseSelection.union(hits).subtracting(model.framedParts(frames))
+        if parts != model.selection { model.selection = parts }
+        if frames != model.selectedFrames { model.selectedFrames = frames }
+    }
+
+    /// Drags the selected frames (with their parts) and loose selected parts together.
+    private func moveSelected(_ d: Drag, dx: Double, dy: Double) {
+        let frames = model.selectedFrames
+        if !frames.isEmpty {
+            let base = model.gestureBase, t = model.frameTime, step = Vec2(dx.rounded(), dy.rounded())
+            let rects = Dictionary(d.boards.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
+            model.updateGesture { s in
+                for f in frames { SceneModel.moveFrame(f, by: step, in: &s, from: base, at: t, rect: rects[f]) }
+            }
+        }
+        transformSelection(dx: dx, dy: dy, mode: .move, skipping: model.framedParts(frames))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -673,13 +809,14 @@ final class ViewportView: NSView {
         case .annotation:
             guard let a = d.annotation, let t = d.target, let q = t.toPlane(scenePoint(p)) else { return }
             model.dragAnnotation(a, by: snap(q - d.planeStart))
-        case .move, .lift, .spin:
+        case .move, .frameMove:
+            moveSelected(d, dx: dx, dy: dy)
+        case .lift, .spin:
             transformSelection(dx: dx, dy: dy, mode: d.mode)
-        case .frameMove:
-            guard let id = d.board else { return }
-            let base = model.gestureBase, t = model.frameTime
-            model.updateGesture { SceneModel.moveFrame(id, by: Vec2(dx.rounded(), dy.rounded()), in: &$0, from: base, at: t) }
         case .frameDraw:
+            needsDisplay = true
+        case .marquee:
+            updateMarquee(d)
             needsDisplay = true
         case .frameResize:
             guard let id = d.board else { return }
@@ -707,6 +844,7 @@ final class ViewportView: NSView {
         }
         guard let d = drag else { return }
         drag = nil
+        if d.mode == .pan { (spaceHeld ? NSCursor.openHand : NSCursor.arrow).set() }
         if d.mode == .frameDraw {
             let a = scenePoint(d.start), b = scenePoint(d.last)
             let rect = d.moved
@@ -720,19 +858,24 @@ final class ViewportView: NSView {
         if d.moved {
             switch d.mode {
             case .pan, .frameDraw: break
+            case .marquee: needsDisplay = true
             case .orbit: model.endGesture("Orbit Camera")
-            case .move:
-                model.reparent(model.selection, among: d.boards)
-                model.endGesture("Move")
+            case .move, .frameMove:
+                // Parts carried by a moving frame stay in it; loose parts join the frame they land in.
+                let frames = model.selectedFrames
+                let loose = model.selection.subtracting(model.framedParts(frames))
+                if !loose.isEmpty { model.reparent(loose, among: d.boards.filter { !frames.contains($0.id) }) }
+                model.endGesture(frames.count == 1 && model.selection.isEmpty ? "Move Frame" : "Move")
             case .lift: model.endGesture("Lift")
             case .spin: model.endGesture("Rotate")
             case .annotation: model.endGesture("Move Art")
-            case .frameMove: model.endGesture("Move Frame")
             case .frameResize: model.endGesture("Resize Frame")
             }
             return
         }
-        if [.annotation, .frameMove, .frameResize].contains(d.mode) { return }
+        // A plain click on a frame in a multiple selection narrows it to that frame.
+        if d.mode == .frameMove, !d.extend, let id = d.board { model.selectFrame(id) }
+        if [.annotation, .frameMove, .frameResize, .pan, .marquee].contains(d.mode) { return }
         if let id = d.hitPart {
             if d.extend {
                 if model.selection.contains(id) { model.selection.remove(id) } else { model.selection.insert(id) }
@@ -742,9 +885,7 @@ final class ViewportView: NSView {
         } else {
             model.selection = []
             model.pickedFaces = []
-            // A click on a frame's empty area selects it, like Figma.
-            let q = scenePoint(d.start)
-            if let b = frameCache?.boards.last(where: { $0.rect.contains(q) }) { model.selectFrame(b.id) } else { model.selectedFrame = nil }
+            model.selectedFrame = nil
         }
     }
 
@@ -841,10 +982,10 @@ final class ViewportView: NSView {
     }
 
     /// Drags move parts on the ground plane, ⇧ lifts them, ⌥ spins them.
-    private func transformSelection(dx: Double, dy: Double, mode: DragMode) {
+    private func transformSelection(dx: Double, dy: Double, mode: DragMode, skipping skip: Set<Part.ID> = []) {
         let base = model.gestureBase
         let t = model.frameTime, auto = model.autoKey
-        let ids = Set(base.parts.filter { model.selection.contains($0.id) && !$0.locked }.map(\.id))
+        let ids = Set(base.parts.filter { model.selection.contains($0.id) && !$0.locked && !skip.contains($0.id) }.map(\.id))
         guard !ids.isEmpty else { return }
         let a = base.isoAngle
         let cam = base.camera.value("spin", at: t) * .pi / 180
@@ -926,7 +1067,11 @@ final class ViewportView: NSView {
         case 124: model.nudge(Vec3(step, 0, 0))
         case 125: model.nudge(Vec3(0, step, 0))
         case 126: model.nudge(Vec3(0, -step, 0))
-        case 49: model.togglePlay()  // space
+        case 49:  // space
+            guard !event.isARepeat, !spaceHeld else { return }
+            spaceHeld = true
+            spacePanned = false
+            if drag == nil { NSCursor.openHand.set() }
         default:
             let ch = event.charactersIgnoringModifiers?.lowercased() ?? ""
             if flags.subtracting(.shift).isEmpty, let tool = Tool.allCases.first(where: { String($0.key) == ch }) {
@@ -944,5 +1089,22 @@ final class ViewportView: NSView {
             default: super.keyDown(with: event)
             }
         }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard event.keyCode == 49 else { return super.keyUp(with: event) }
+        releaseSpace(play: true)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseSpace(play: false)
+        return super.resignFirstResponder()
+    }
+
+    private func releaseSpace(play: Bool) {
+        guard spaceHeld else { return }
+        spaceHeld = false
+        if drag?.mode != .pan { NSCursor.arrow.set() }
+        if play && !spacePanned { model.togglePlay() }
     }
 }

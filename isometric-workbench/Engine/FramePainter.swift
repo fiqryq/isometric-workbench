@@ -320,6 +320,10 @@ nonisolated extension Box2 {
     var cgRect: CGRect { isEmpty ? .zero : CGRect(x: minX, y: minY, width: width, height: height) }
 
     func contains(_ p: Vec2) -> Bool { p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY }
+
+    func contains(_ b: Box2) -> Bool { b.minX >= minX && b.maxX <= maxX && b.minY >= minY && b.maxY <= maxY }
+
+    func intersects(_ b: Box2) -> Bool { b.minX <= maxX && b.maxX >= minX && b.minY <= maxY && b.maxY >= minY }
 }
 
 nonisolated extension CGMutablePath {

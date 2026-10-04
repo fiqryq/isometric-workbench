@@ -14,7 +14,7 @@ struct FrameInspector: View {
 
     var body: some View {
         let rect = model.frameRect(board.id) ?? Box2(minX: 0, minY: 0, maxX: 0, maxY: 0)
-        InspectorSection("Frame") {
+        InspectorSection("Frame · \(board.children.count) part\(board.children.count == 1 ? "" : "s")") {
             CommitField(title: "Name", text: board.name) { v in
                 let name = v.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !name.isEmpty { edit("Rename Frame") { $0.name = name } }
@@ -72,19 +72,13 @@ struct FrameInspector: View {
                 CommitField(title: "Figure", text: board.fig) { v in edit("Edit Frame") { $0.fig = v } }
                 CommitField(title: "Title", text: board.title) { v in edit("Edit Frame") { $0.title = v } }
                 CommitField(title: "Year", text: board.year) { v in edit("Edit Frame") { $0.year = v } }
-                FieldPair {
-                    NumberField(label: "Grid", icon: "squareshape.split.3x3", value: board.grid, step: 4, range: 4...200) { v in
-                        edit("Edit Frame") { $0.grid = v }
-                    }
-                } _: {
-                    NumberField(label: "Margin", icon: "rectangle.inset.filled", value: board.margin, step: 8, range: 0...1000) { v in
-                        edit("Edit Frame") { $0.margin = v }
-                    }
+                SliderField(label: "Grid", icon: "squareshape.split.3x3", value: board.grid, range: 4...200, step: 4) { v in
+                    edit("Edit Frame") { $0.grid = v }
+                }
+                SliderField(label: "Margin", icon: "rectangle.inset.filled", value: board.margin, range: 0...400, step: 8) { v in
+                    edit("Edit Frame") { $0.margin = v }
                 }
             }
-        }
-        InspectorSection {
-            InspectorNote("\(board.children.count) part\(board.children.count == 1 ? "" : "s") · drag parts in or out to change that.")
         }
     }
 

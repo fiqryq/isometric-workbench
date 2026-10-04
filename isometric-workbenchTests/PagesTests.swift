@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 struct PagesTests {
-    @Test("Pages share parts but each keeps its own animation, and page edits undo")
+    @Test("Each page is its own canvas, the view follows the page, and page edits undo")
     func pages() throws {
         let floppy = try #require(Example.named("floppy"))
         let model = SceneDocument(scene: floppy.scene()).model
@@ -17,6 +17,9 @@ struct PagesTests {
         let first = model.activePageID
         let before = model.exportFrame().items.map(\.box)
         #expect(model.pages.count == 1)
+        model.selection = [model.scene.parts[0].id]
+        model.zoom = 3
+        model.pan = Vec2(120, -40)
 
         undo.beginUndoGrouping()
         model.addPage()
@@ -24,22 +27,24 @@ struct PagesTests {
         let second = model.activePageID
         #expect(model.pages.count == 2 && second != first)
         #expect(model.pages.map(\.name) == ["Page 1", "Page 2"])
-        #expect(!model.scene.parts.contains { $0.anim.isAnimated })
+        #expect(model.scene.parts.isEmpty && model.selection.isEmpty)
+        #expect(model.exportFrame().items.isEmpty)
 
+        model.addPrimitive(PrimitiveSpec.all[0])
         let id = model.scene.parts[0].id
-        model.updatePart(id, "Move") { $0.anim.base["z"] = 300 }
         model.edit("Lengthen") { $0.duration = 9 }
         model.seek(8)
-        let moved = model.exportFrame().items.first { $0.part.id == id }!.box
 
         model.switchPage(first)
         #expect(model.scene.duration == floppy.scene().duration)
         #expect(model.time <= model.scene.duration)
         #expect(model.exportFrame().items.map(\.box) == before)
+        #expect(!model.scene.parts.contains { $0.id == id })
+        #expect(model.zoom == 3 && model.pan == Vec2(120, -40))
 
         model.switchPage(by: 1)
         #expect(model.activePageID == second)
-        #expect(model.exportFrame().items.first { $0.part.id == id }!.box == moved)
+        #expect(model.scene.parts.map(\.id) == [id])
         #expect(model.svg().contains("<svg"))
 
         undo.beginUndoGrouping()
