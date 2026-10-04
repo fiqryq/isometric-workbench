@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Examples and documents")
 struct DocumentTests {
-    @Test("Examples produce the plugin's ops", arguments: Example.all.map(\.id))
+    @Test("Examples produce the plugin's ops", arguments: Example.all.filter(\.inPlugin).map(\.id))
     func exampleOps(_ id: String) throws {
         let example = try #require(Example.named(id))
         let js = try JSOracle.shared.json("E.EXAMPLES[\"\(id)\"].parts().map((p) => p.ops)").array ?? []
@@ -20,7 +20,7 @@ struct DocumentTests {
         }
     }
 
-    @Test("Every example part evaluates and renders like the plugin", arguments: Example.all.map(\.id))
+    @Test("Every example part evaluates and renders like the plugin", arguments: Example.all.filter(\.inPlugin).map(\.id))
     func exampleGeometry(_ id: String) throws {
         let example = try #require(Example.named(id))
         for (i, part) in example.parts().enumerated() {
@@ -29,6 +29,17 @@ struct DocumentTests {
             let js = try JSOracle.shared.json("E.renderSolid({ angle: 30, smooth: 40, ops: E.EXAMPLES[\"\(id)\"].parts()[\(i)].ops })").array ?? []
             #expect(runs.count == js.count, "\(part.name) runs")
             #expect(runs.map(\.edges.count) == js.map { $0["edges"]?.array?.count ?? -1 }, "\(part.name) edges")
+        }
+    }
+
+    @Test("Every example part builds a solid and draws", arguments: Example.all.map(\.id))
+    func exampleRenders(_ id: String) throws {
+        let example = try #require(Example.named(id))
+        for part in example.parts() {
+            let prepared = try PreparedMesh.build(part.ops)
+            #expect(!prepared.mesh.isEmpty, "\(part.name) is empty")
+            let runs = try Renderer.render(prepared, options: RenderOptions())
+            #expect(!runs.isEmpty, "\(part.name) draws nothing")
         }
     }
 

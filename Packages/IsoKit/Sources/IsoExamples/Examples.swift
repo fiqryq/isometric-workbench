@@ -49,14 +49,21 @@ public struct Example: Sendable, Identifiable {
     public let year: String?
     public let parts: @Sendable () -> [ExamplePart]
     public let guides: (@Sendable () -> [Guide])?
+    /// Whether the Figma plugin ships the same example (op for op).
+    public var inPlugin = true
 
     public static let all: [Example] = [
-        Example(id: "logo", title: "Isometric Workbench logo", fig: "FIG.000", year: nil, parts: logoParts, guides: nil),
+        Example(id: "logo", title: "Isometric Workbench logo", fig: "FIG.000", year: nil, parts: logoParts, guides: nil, inPlugin: false),
         Example(id: "keyswitch", title: "Mechanical keyswitch", fig: "FIG.008", year: nil, parts: keyswitchParts, guides: nil),
         Example(id: "camera", title: "Rangefinder camera", fig: "FIG.014", year: nil, parts: cameraParts, guides: nil),
         Example(id: "gear", title: "Spur gear", fig: "FIG.021", year: nil, parts: gearParts, guides: nil),
         Example(id: "handheld", title: "Handheld game console", fig: "FIG.027", year: nil, parts: handheldParts, guides: nil),
         Example(id: "floppy", title: "3.5\" floppy disk", fig: "FIG.001", year: "1986", parts: floppyParts, guides: floppyGuides),
+        Example(id: "phone", title: "Smartphone teardown", fig: "FIG.031", year: nil, parts: phoneParts, guides: phoneGuides, inPlugin: false),
+        Example(id: "macropad", title: "Macro keypad", fig: "FIG.033", year: nil, parts: macropadParts, guides: macropadGuides, inPlugin: false),
+        Example(id: "bearing", title: "Deep-groove ball bearing", fig: "FIG.042", year: nil, parts: bearingParts, guides: bearingGuides, inPlugin: false),
+        Example(id: "cassette", title: "Compact cassette", fig: "FIG.049", year: "1963", parts: cassetteParts, guides: cassetteGuides, inPlugin: false),
+        Example(id: "bulb", title: "LED light bulb", fig: "FIG.055", year: nil, parts: bulbParts, guides: bulbGuides, inPlugin: false),
     ]
 
     public static func named(_ id: String) -> Example? { all.first { $0.id == id } }
