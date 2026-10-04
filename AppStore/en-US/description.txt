@@ -1,0 +1,22 @@
+Isometric Workbench turns simple parts into clean, animated isometric blueprints: exploded views, section cuts and labelled diagrams, drawn as crisp line art.
+
+BUILD
+• Start from boxes, cylinders, spheres, cones, tubes, tori, prisms, wedges and stairs, or draw your own outline with the pen and shape tools, then extrude or revolve it.
+• Push faces, add loop cuts, pick loop rings to scale or taper, push individual segments, and union or subtract primitives.
+• Cut hatched sections, and add callouts, dimension lines, text and SVG or image decals that follow the surface they sit on.
+
+ANIMATE
+• Explode an assembly, spin the camera and stagger parts on a full timeline.
+• Edit every property on its own track, retime keys by dragging, and pick an easing for each one.
+
+EXPORT
+• PNG, SVG and PDF that stay editable in your design tools.
+• Video (H.264, HEVC, ProRes 4444 with transparency), animated GIF and PNG sequences.
+
+STYLE
+• Blueprint, Ink, Redline and Cyanotype palettes or your own colours, adjustable line weight and hatch spacing, and an optional patent-style drawing sheet.
+
+FREE AND PRO
+All modelling and animation are free with unlimited documents. Free exports carry a small "Made with Isometric Workbench" mark, images go up to 1200 px, and videos up to 5 seconds at 720p. A one-time Workbench Pro purchase removes the mark and every limit, including 4K, ProRes and PNG sequences. Family Sharing is supported.
+
+No accounts, no tracking, no subscriptions.

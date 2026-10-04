@@ -1,0 +1,1 @@
+Build parts, explode them on a timeline and export crisp isometric line art as SVG, PDF, video or GIF.

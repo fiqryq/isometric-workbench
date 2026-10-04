@@ -1,0 +1,8 @@
+Product ID: fiqryq.isometricworkbench.pro
+Type: Non-Consumable
+Reference name: Workbench Pro
+Price: USD 39.99
+Family Sharing: on
+
+Display name: Workbench Pro
+Description: Full-resolution images and unlimited video, GIF and ProRes exports with no mark.

@@ -1,0 +1,7 @@
+No account or sign-in is required.
+
+To try the app quickly, click "3.5" floppy disk" under Examples in the sidebar, then click the canvas and press Space to play the exploded-view animation.
+
+In-app purchase "Workbench Pro" (fiqryq.isometricworkbench.pro, non-consumable) removes the export watermark and size limits. It can be bought from Isometric Workbench > Unlock Workbench Pro…, or from the video export sheet. "Restore Purchase" is in Settings (⌘,) and in the purchase sheet.
+
+The app is sandboxed and only reads or writes files the user picks in an open or save panel, plus the Downloads folder. It makes no network requests of its own.

@@ -1,0 +1,38 @@
+{
+  "identifier" : "7C1E2B54",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "39.99",
+      "familyShareable" : true,
+      "internalID" : "6740000001",
+      "localizations" : [
+        {
+          "description" : "Full-resolution images and unlimited video, GIF and ProRes exports with no mark.",
+          "displayName" : "Workbench Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "fiqryq.isometricworkbench.pro",
+      "referenceName" : "Workbench Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

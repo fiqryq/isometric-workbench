@@ -1,0 +1,8 @@
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcresult
+Packages/*/.build/
+Packages/*/.swiftpm/
+AuthKey*.p8
