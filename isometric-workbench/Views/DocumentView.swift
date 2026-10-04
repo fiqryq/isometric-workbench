@@ -98,7 +98,7 @@ struct ExportMenuItems: View {
         Button("Export PDF…") { Exporter.save(model, as: .pdf) }
         Button("Export PNG…") { Exporter.save(model, as: .png) }
         Divider()
-        Button("Export Video or GIF…") { model.presentVideoExport = true }
+        Button("Export Animation…") { model.presentVideoExport = true }
         Divider()
         Button("Copy as SVG") { Exporter.copySVG(model) }
     }

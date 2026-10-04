@@ -36,7 +36,7 @@ struct WorkbenchCommands: Commands {
                 .disabled(model == nil)
             Button("Export PNG…") { model.map { Exporter.save($0, as: .png) } }
                 .disabled(model == nil)
-            Button("Export Video or GIF…") { model?.presentVideoExport = true }
+            Button("Export Animation…") { model?.presentVideoExport = true }
                 .keyboardShortcut("e", modifiers: [.command, .option])
                 .disabled(model == nil)
         }

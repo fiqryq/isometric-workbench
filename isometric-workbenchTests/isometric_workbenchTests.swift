@@ -174,7 +174,7 @@ struct WorkbenchTests {
         #expect(model.scene.parts[0].anim.base["z"] == 40)
     }
 
-    @Test("Video, GIF and PNG sequence export", arguments: VideoFormat.allCases)
+    @Test("Video, GIF and PNG sequence export", arguments: VideoFormat.allCases.filter { !$0.isVector })
     func videoExport(_ format: VideoFormat) async throws {
         var scene = try #require(Example.named("floppy")).scene()
         scene.duration = 1

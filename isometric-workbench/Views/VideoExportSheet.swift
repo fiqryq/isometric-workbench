@@ -35,6 +35,10 @@ struct VideoExportSheet: View {
                     if settings.format.supportsAlpha {
                         Toggle("Transparent background", isOn: $settings.transparent)
                     }
+                } footer: {
+                    if settings.format.isVector {
+                        Text("Every distinct frame is saved as paths, so lower frame rates make smaller files.")
+                    }
                 }
                 Section("Range") {
                     NumberField(label: "Start (s)", value: settings.start, step: 0.5, range: 0...model.scene.duration) { v in
