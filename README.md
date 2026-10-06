@@ -32,11 +32,3 @@ cd Packages/IsoKit && swift test
 ```
 
 App tests run from Xcode with ⌘U.
-
-## Releasing
-
-Pushing a `v*` tag uploads a build to TestFlight. To do it locally:
-
-```sh
-TEAM_ID=XXXXXXXXXX scripts/release.sh
-```
